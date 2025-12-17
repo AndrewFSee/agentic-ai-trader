@@ -66,6 +66,19 @@ sentiment_build_*.csv
 ml_models/research_reports/**/*.md
 research_reports/**/*.md
 
+# ==================== LIVE TESTING & EXPERIMENTS ====================
+# Live testing simulations and experiments (not for GitHub)
+live_testing/
+experimental/
+trading_logs/
+simulation_results/
+
+# Keep directory structure
+!live_testing/.gitkeep
+!experimental/.gitkeep
+!trading_logs/.gitkeep
+!simulation_results/.gitkeep
+
 # ==================== PYTHON ====================
 # Byte-compiled / optimized / DLL files
 __pycache__/
