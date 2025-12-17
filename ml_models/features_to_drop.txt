@@ -1,0 +1,33 @@
+# Features to drop (low importance < 0.001)
+# Generated from feature importance analysis
+
+debt_to_equity
+payout_ratio
+roa
+macro_risk_on
+wass_volatility
+forward_pe
+wass_regime_change
+gold_momentum_divergence
+earnings_growth
+usd_momentum_divergence
+breadth_weak
+current_ratio
+regime_trend_bull
+peg_ratio
+pb_ratio
+financial_health
+gold_corr_20d
+breadth_strong
+breadth_divergence
+sentiment_extreme
+ad_ratio_ma20
+gross_margin
+usd_corr_10d
+gold_corr_50d
+pe_to_growth
+ad_line_ma20
+pe_ratio
+dividend_attractive
+dividend_yield
+quality_score

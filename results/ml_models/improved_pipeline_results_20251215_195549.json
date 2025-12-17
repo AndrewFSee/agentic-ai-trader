@@ -1,0 +1,22 @@
+{
+  "timestamp": "20251215_195549",
+  "config": {
+    "symbols": [
+      "PG",
+      "JNJ",
+      "COST",
+      "KO"
+    ],
+    "horizons": [
+      5,
+      10
+    ],
+    "models": [
+      "logistic",
+      "decision_tree",
+      "random_forest",
+      "xgboost"
+    ]
+  },
+  "results": []
+}

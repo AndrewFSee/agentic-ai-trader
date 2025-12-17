@@ -1,0 +1,268 @@
+# ==================== SENSITIVE FILES ====================
+# Environment variables (API keys, secrets)
+.env
+.env.*
+!.env.example
+
+# ==================== LEGAL/COPYRIGHT CONCERNS ====================
+# Trading books (copyrighted PDFs)
+data/books/**/*.pdf
+data/books/**/*.epub
+data/books/**/*.mobi
+
+# Downloaded financial data (may have licensing restrictions)
+data/sentiment_cache.db
+data/gdelt_cache.db
+data/*.csv
+data/*.parquet
+data/*.h5
+
+# Cached market data
+cache/
+*.cache
+
+# ==================== LARGE MODEL FILES ====================
+# Trained ML models (can be regenerated)
+ml_models/saved_models/**/*.pkl
+ml_models/saved_models/**/*.joblib
+ml_models/saved_models/**/*.h5
+ml_models/saved_models/**/*.pt
+ml_models/data/**/*.csv
+ml_models/data/**/*.parquet
+ml_models/results/*.csv
+
+# Keep directory structure but ignore contents
+!ml_models/saved_models/.gitkeep
+!ml_models/data/.gitkeep
+!ml_models/results/.gitkeep
+
+# ==================== TEST FILES & OUTPUTS ====================
+# Test scripts (numbered or with "test_" prefix)
+test_*.py
+*_test.py
+test_*.txt
+test_output.txt
+test_input.txt
+test_error.txt
+test_stdout.txt
+scratch_*.py
+
+# Test results and logs
+*_test_output.txt
+aapl_regime_test.txt
+msft_fresh_test.txt
+tsla_test.txt
+test_both_regimes.txt
+agent_output.txt
+agent_test.log
+ml_test_output.log
+
+# Sentiment batch build outputs
+sentiment_batch*_*.csv
+sentiment_batch*_log.txt
+sentiment_build_*.csv
+
+# Research reports (can be regenerated)
+ml_models/research_reports/**/*.md
+research_reports/**/*.md
+
+# ==================== PYTHON ====================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+.venv_*/
+venv/
+env/
+ENV/
+agentic_ai_trader_env/
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# ==================== JUPYTER NOTEBOOKS ====================
+.ipynb_checkpoints/
+*.ipynb
+
+# ==================== DATABASES ====================
+*.db
+*.sqlite
+*.sqlite3
+
+# Chroma vector store (entire directory except .gitkeep)
+db/books/*
+!db/books/.gitkeep
+
+# Keep empty db directories
+!db/.gitkeep
+
+# ==================== LOGS ====================
+logs/
+*.log
+*.out
+*.err
+agent_run_full.err
+
+# ==================== IDE / EDITOR ====================
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject
+
+# Visual Studio
+.vs/
+
+# ==================== OPERATING SYSTEM ====================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ==================== TEMPORARY FILES ====================
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.~lock.*
+
+# Project-specific temp files
+simple_format_test.py
+test_ml_formatter.py
+test_enhanced_ml_format.py
+test_ml_missing_features.py
+test_agent_ml_format.py
+check_saved_features.py
+compare_model_features.py
+
+# ==================== DOCUMENTATION DRAFTS ====================
+# Keep final docs but ignore drafts
+*_DRAFT.md
+*_WIP.md
+*_OLD.md
+
+# ==================== ML/AI SPECIFIC ====================
+# Weights & Biases
+wandb/
+
+# TensorBoard
+runs/
+tensorboard/
+
+# Hugging Face cache
+.cache/huggingface/
+
+# FinBERT model cache (downloaded on first use)
+models/finbert/
+
+# ==================== RESULTS & OUTPUTS ====================
+# Analysis results
+results/*.txt
+results/*.csv
+results/*.png
+results/*.json
+
+# Backtest results
+ml_models/backtest_results/
+ml_models/tuning_results/
+
+# ==================== EXCEPTIONS (KEEP THESE) ====================
+# Keep example environment file
+!.env.example
+
+# Keep README files
+!README*.md
+!docs/**/*.md
+
+# Keep requirements
+!requirements*.txt
+
+# Keep config examples
+!config.example.py
+!*example*.py
+
+# Keep empty directories with .gitkeep
+!**/.gitkeep
+
+# Keep project documentation
+!docs/
+!PROJECT_STATUS.md
+
+# Keep essential scripts
+!analyze_trade_agent.py
+!planner.py
+!tools.py
+!agent_tools.py
+!build_vectorstore.py
+!ml_prediction_tool.py
+!polygon_tools.py
+!research_tools.py
+!sentiment_tools.py
+
+# Keep ML pipeline (but not data/models)
+!ml_models/*.py
+!ml_models/config.py
+!ml_models/README.md

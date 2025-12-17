@@ -1,0 +1,14 @@
+{
+  "timestamp": "20251215_191818",
+  "config": {
+    "symbols": [
+      "AAPL"
+    ],
+    "horizons": [
+      5
+    ],
+    "num_stocks": 1
+  },
+  "individual_results": [],
+  "aggregate": {}
+}

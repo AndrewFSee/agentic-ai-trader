@@ -1,0 +1,48 @@
+{
+  "requested_series": [
+    "DGS10",
+    "DGS2",
+    "TEDRATE",
+    "M2SL",
+    "BAMLC0A0CM"
+  ],
+  "observations": {
+    "DGS10": {
+      "latest": {
+        "date": "2025-12-11",
+        "value": "4.14"
+      },
+      "count": 1552
+    },
+    "DGS2": {
+      "latest": {
+        "date": "2025-12-11",
+        "value": "3.52"
+      },
+      "count": 1552
+    },
+    "TEDRATE": {
+      "latest": {
+        "date": "2022-01-21",
+        "value": "0.09"
+      },
+      "count": 538
+    },
+    "M2SL": {
+      "latest": {
+        "date": "2025-10-01",
+        "value": "22298.1"
+      },
+      "count": 70
+    },
+    "BAMLC0A0CM": {
+      "latest": {
+        "date": "2025-12-11",
+        "value": "0.78"
+      },
+      "count": 1572
+    }
+  },
+  "fetched_at": "2025-12-13T21:03:10.928360Z",
+  "term_spread_10y_2y": 0.6199999999999997
+}

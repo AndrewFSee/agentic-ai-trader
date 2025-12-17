@@ -1,0 +1,195 @@
+{
+  "timestamp": "20251216_130339",
+  "symbols": [
+    "AAPL",
+    "NVDA",
+    "JPM"
+  ],
+  "horizons": [
+    5,
+    10
+  ],
+  "n_trials": 50,
+  "results": [
+    {
+      "symbol": "AAPL",
+      "horizon": 5,
+      "best_params": {
+        "learning_rate": 0.014474575242235669,
+        "max_depth": 8,
+        "n_estimators": 200,
+        "subsample": 0.6073248792362045,
+        "colsample_bytree": 0.8366849379399733,
+        "gamma": 0.5926665201612982,
+        "min_child_weight": 6,
+        "reg_alpha": 0.3383173886753599,
+        "reg_lambda": 0.10731581327742817
+      },
+      "val_sharpe": 3.6711509528929196,
+      "test_sharpe": 2.4538102371060013,
+      "test_return": 0.6452966878030677,
+      "test_result": {
+        "total_return": 0.6452966878030677,
+        "annualized_return": 0.8175780449672392,
+        "sharpe_ratio": 2.4538102371060013,
+        "max_drawdown": -0.09806772488456983,
+        "win_rate": 0.20476190476190476,
+        "num_trades": 0,
+        "num_days": 210,
+        "model": "XGBoost",
+        "symbol": "AAPL",
+        "horizon": 5
+      }
+    },
+    {
+      "symbol": "AAPL",
+      "horizon": 10,
+      "best_params": {
+        "learning_rate": 0.06669636245747576,
+        "max_depth": 9,
+        "n_estimators": 100,
+        "subsample": 0.6299170413754109,
+        "colsample_bytree": 0.753193454866063,
+        "gamma": 0.43631038987724097,
+        "min_child_weight": 4,
+        "reg_alpha": 0.4598346150296587,
+        "reg_lambda": 0.7836257960317727
+      },
+      "val_sharpe": 3.5236487773711027,
+      "test_sharpe": 1.4062396296867574,
+      "test_return": 0.3230631079600623,
+      "test_result": {
+        "total_return": 0.3230631079600623,
+        "annualized_return": 0.3992543695637123,
+        "sharpe_ratio": 1.4062396296867574,
+        "max_drawdown": -0.15228318322752113,
+        "win_rate": 0.1619047619047619,
+        "num_trades": 0,
+        "num_days": 210,
+        "model": "XGBoost",
+        "symbol": "AAPL",
+        "horizon": 10
+      }
+    },
+    {
+      "symbol": "NVDA",
+      "horizon": 5,
+      "best_params": {
+        "learning_rate": 0.05834233864016747,
+        "max_depth": 4,
+        "n_estimators": 500,
+        "subsample": 0.9226456113248661,
+        "colsample_bytree": 0.7017882423461942,
+        "gamma": 0.8397174028361047,
+        "min_child_weight": 3,
+        "reg_alpha": 0.33146100065158846,
+        "reg_lambda": 0.41831547751341247
+      },
+      "val_sharpe": 2.6650280536426814,
+      "test_sharpe": 3.5109749023480803,
+      "test_return": 1.4517099742671289,
+      "test_result": {
+        "total_return": 1.4517099742671289,
+        "annualized_return": 1.9333434325973102,
+        "sharpe_ratio": 3.5109749023480803,
+        "max_drawdown": -0.1362745098039217,
+        "win_rate": 0.29523809523809524,
+        "num_trades": 0,
+        "num_days": 210,
+        "model": "XGBoost",
+        "symbol": "NVDA",
+        "horizon": 5
+      }
+    },
+    {
+      "symbol": "NVDA",
+      "horizon": 10,
+      "best_params": {
+        "learning_rate": 0.11114989443094977,
+        "max_depth": 3,
+        "n_estimators": 500,
+        "subsample": 0.9329770563201687,
+        "colsample_bytree": 0.6849356442713105,
+        "gamma": 0.18182496720710062,
+        "min_child_weight": 2,
+        "reg_alpha": 0.3042422429595377,
+        "reg_lambda": 0.5247564316322378
+      },
+      "val_sharpe": 1.6390210664320808,
+      "test_sharpe": 3.3671821396567334,
+      "test_return": 0.7632601839072259,
+      "test_result": {
+        "total_return": 0.7632601839072259,
+        "annualized_return": 0.9750572144636591,
+        "sharpe_ratio": 3.3671821396567334,
+        "max_drawdown": -0.07347028423772596,
+        "win_rate": 0.21904761904761905,
+        "num_trades": 0,
+        "num_days": 210,
+        "model": "XGBoost",
+        "symbol": "NVDA",
+        "horizon": 10
+      }
+    },
+    {
+      "symbol": "JPM",
+      "horizon": 5,
+      "best_params": {
+        "learning_rate": 0.18637369945981028,
+        "max_depth": 7,
+        "n_estimators": 350,
+        "subsample": 0.9621209155182306,
+        "colsample_bytree": 0.8661504430442083,
+        "gamma": 0.8924418035933726,
+        "min_child_weight": 6,
+        "reg_alpha": 0.3717821542084218,
+        "reg_lambda": 0.6774038672548172
+      },
+      "val_sharpe": 3.6069436266368915,
+      "test_sharpe": 1.5029793008223018,
+      "test_return": 0.23639217905996368,
+      "test_result": {
+        "total_return": 0.23639217905996368,
+        "annualized_return": 0.2899934319098263,
+        "sharpe_ratio": 1.5029793008223018,
+        "max_drawdown": -0.09563117413366828,
+        "win_rate": 0.2,
+        "num_trades": 0,
+        "num_days": 210,
+        "model": "XGBoost",
+        "symbol": "JPM",
+        "horizon": 5
+      }
+    },
+    {
+      "symbol": "JPM",
+      "horizon": 10,
+      "best_params": {
+        "learning_rate": 0.2077395972864495,
+        "max_depth": 6,
+        "n_estimators": 200,
+        "subsample": 0.9532220390567299,
+        "colsample_bytree": 0.6408466240047552,
+        "gamma": 0.1779074609136775,
+        "min_child_weight": 4,
+        "reg_alpha": 0.5464853689531814,
+        "reg_lambda": 0.44099974284946347
+      },
+      "val_sharpe": 3.510200802181005,
+      "test_sharpe": 1.3367128174117482,
+      "test_return": 0.19618808621583406,
+      "test_result": {
+        "total_return": 0.19618808621583406,
+        "annualized_return": 0.23982208199894783,
+        "sharpe_ratio": 1.3367128174117482,
+        "max_drawdown": -0.08142148760330573,
+        "win_rate": 0.1619047619047619,
+        "num_trades": 0,
+        "num_days": 210,
+        "model": "XGBoost",
+        "symbol": "JPM",
+        "horizon": 10
+      }
+    }
+  ]
+}

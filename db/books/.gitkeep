@@ -1,0 +1,2 @@
+# This file ensures the db/books directory exists for Chroma vector store
+# The actual .sqlite files are not tracked by git (too large and specific to your setup)

@@ -1,0 +1,13 @@
+# GPT-Researcher and dependencies for deep research functionality
+# Run: pip install -r requirements_research.txt
+
+# Core GPT-Researcher package
+gpt-researcher>=0.9.0
+
+# Already have these in main project (listed for reference):
+# python-dotenv>=1.0.0
+# requests>=2.31.0
+# langchain-openai>=0.1.0
+
+# Additional dependencies for GPT-Researcher:
+tavily-python>=0.3.0  # Tavily API for web search (get free key at https://tavily.com)

@@ -1,0 +1,5 @@
+{
+  "symbol": "NVDA",
+  "company_name": "",
+  "error": "Failed to import gpt-researcher or its dependencies: 'NoneType' object is not subscriptable.\nPossible causes: gpt-researcher not installed, missing optional packages (spacy/thinc), or binary incompatibility with your installed numpy.\nSuggested fixes: run `pip install -r requirements_research.txt` in a fresh venv, or install a numpy version compatible with your compiled packages (e.g., try `pip install --force-reinstall --no-deps numpy==1.24.4`)."
+}
