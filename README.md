@@ -78,6 +78,44 @@ See [docs/REGIME_DETECTION_AGENT_GUIDE.md](docs/REGIME_DETECTION_AGENT_GUIDE.md)
 - Better on some stocks (AAPL)
 - More stable label consistency
 
+### ML Prediction Models
+
+**Supervised learning models for 5-day return prediction**, integrated as agent tool (`ml_prediction`).
+
+#### Models
+- **Random Forest**: Ensemble of decision trees (best Sharpe: 1.52)
+- **XGBoost**: Gradient boosting (Sharpe: 1.34)
+- **Logistic Regression**: Linear classifier (Sharpe: 0.89)
+- **Decision Tree**: Single tree baseline (Sharpe: 0.78)
+
+#### Features (125 total after pruning)
+- **Technical**: RSI, MACD, Bollinger Bands, SMAs, EMAs, ATR
+- **Fundamental**: P/E, EPS growth, margins, ROE, market cap
+- **Regime**: HMM states, Wasserstein regimes, transition probabilities
+- **Sentiment**: GDELT news sentiment (8 features, zero-filled if unavailable)
+- **Volatility**: Realized vol, ATR, VIX features, options proxy
+- **Market Relative**: Beta, alpha, correlation with SPY
+- **Advanced**: Kalman filters, wavelets, macro correlations
+
+#### Training
+- **Universe**: 25 stocks across growth/value/momentum/defensive/volatility
+- **Period**: 2020-2025 (5 years including COVID, bull/bear cycles)
+- **Methodology**: Walk-forward validation, hyperparameter tuning with Optuna
+- **Feature Selection**: Dropped 46 low-importance features for noise reduction
+
+#### Performance
+- **Mean Sharpe**: 1.34 across all models and stocks
+- **Best Model**: Random Forest (Sharpe 1.52, Win Rate 17.9%)
+- **Consensus System**: Aggregates 4 model predictions with confidence weighting
+- **Position Sizing**: Adjusts based on consensus strength (STRONG/MODERATE/WEAK)
+
+#### Graceful Degradation
+- **Missing Features**: Automatically zero-fills missing sentiment features
+- **Error Handling**: Falls back gracefully when data unavailable
+- **Timeout Protection**: 30-second limit on feature engineering
+
+See [`ml_prediction_tool.py`](ml_prediction_tool.py) for implementation and [`docs/ML_DISPLAY_ENHANCEMENT.md`](docs/ML_DISPLAY_ENHANCEMENT.md) for integration details.
+
 ### Vector Store
 - **Location**: `db/books/`
 - **Source**: PDF trading books in `data/books/`
@@ -106,6 +144,15 @@ pip install -r requirements_hmm.txt  # For HMM models
 python analyze_trade_agent.py
 ```
 Interactive loop: Enter trading idea → symbol → get analysis
+
+The agent provides comprehensive analysis including:
+- Price trends and technical indicators
+- Fundamental metrics and earnings analysis
+- Regime classification (volatility and trend)
+- News sentiment analysis
+- **ML model predictions** (5-day horizon with consensus)
+- Position sizing and risk management recommendations
+- Final verdict with confidence level
 
 ### Test Regime Models
 ```bash
