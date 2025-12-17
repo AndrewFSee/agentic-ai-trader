@@ -1,6 +1,6 @@
 # Agentic AI Trader
 
-RAG-enhanced trading decision agent that combines vector store of trading books with LLM-based planning and tool execution.
+RAG-enhanced trading decision agent that combines vector store of trading books, regime clustering models (Wasserstein & HMM), supervised ML predictions, and LLM-based planning with dynamic tool execution.
 
 ## Project Structure
 
@@ -14,10 +14,19 @@ agentic_ai_trader/
 ├── polygon_tools.py            # Polygon.io market data tools
 ├── research_tools.py           # Research agent integration
 ├── sentiment_tools.py          # Sentiment analysis tools
+├── ml_prediction_tool.py       # ML prediction models integration
 │
 ├── models/                     # Regime detection models
 │   ├── paper_wasserstein_regime_detection.py   # Paper-faithful Wasserstein k-means
 │   └── rolling_hmm_regime_detection.py         # Professional rolling HMM
+│
+├── ml_models/                  # Supervised ML prediction models
+│   ├── saved_models/           # Trained model files (4 models)
+│   ├── data/                   # Training data and features
+│   ├── results/                # Backtest results and metrics
+│   ├── backtest.py            # Walk-forward backtesting
+│   ├── breadth_features.py    # Market breadth indicators
+│   └── build_sentiment_*.py   # Sentiment database builders
 │
 ├── data/                       # Trading books and source data
 ├── db/                         # Vector store (Chroma DB)
