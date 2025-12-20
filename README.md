@@ -221,8 +221,13 @@ Two searches per query:
 2. **Risk management**: k=6 chunks about discipline/psychology
 
 ## License
+This project is licensed under the MIT License.
+See the LICENSE file for details.
 
-[Your License]
+## Disclaimer
+This project is provided for research and educational purposes only.  
+It is not financial or investment advice. Trading involves significant risk of loss.
+
 
 ## References
 
