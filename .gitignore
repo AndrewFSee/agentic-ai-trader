@@ -4,6 +4,9 @@
 .env.*
 !.env.example
 
+# ==================== ARCHIVE (old files, not for version control) ====================
+archive/
+
 # ==================== LEGAL/COPYRIGHT CONCERNS ====================
 # Trading books (copyrighted PDFs)
 data/books/**/*.pdf

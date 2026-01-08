@@ -14,31 +14,23 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 from dotenv import load_dotenv
 load_dotenv()
 
-# Disable Chroma/Posthog telemetry by default in this project venv.
-# Telemetry can spawn background threads and (on some Windows envs) trigger
-# native SSL/native-extension crashes. Disable it to avoid access violations
-# during automated runs. You can re-enable by setting CHROMA_TELEMETRY_ENABLED=1
-os.environ.setdefault("CHROMA_TELEMETRY_ENABLED", "false")
-os.environ.setdefault("CHROMA_DISABLE_TELEMETRY", "1")
-os.environ.setdefault("POSTHOG_HOST", "")
-os.environ.setdefault("POSTHOG_API_KEY", "")
-
 # If a project venv was created (.venv_research), prefer running inside it to avoid ABI/import issues
-try:
-    import sys
-    import os
-    venv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".venv_research"))
-    if os.path.isdir(venv_path):
-        venv_python = os.path.join(venv_path, "Scripts", "python.exe")
-        # If we're not already running under the venv python, re-exec using it, unless in WSL.
-        if not sys.executable.lower().startswith(os.path.normcase(venv_path).lower()):
-            if os.path.exists(venv_python) and sys.executable.lower() != os.path.normcase(venv_python).lower():
-                if not os.getenv("WSL_DISTRO_NAME"):
-                    print(f"Re-executing under project venv: {venv_python}")
-                    os.execv(venv_python, [venv_python] + sys.argv)
-except Exception:
-    # Best-effort only; if this fails, continue with the current interpreter
-    pass
+# DISABLED FOR PAPER TRADING: Use conda base environment which has all dependencies
+# try:
+#     import sys
+#     import os
+#     venv_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".venv_research"))
+#     if os.path.isdir(venv_path):
+#         venv_python = os.path.join(venv_path, "Scripts", "python.exe")
+#         # If we're not already running under the venv python, re-exec using it, unless in WSL.
+#         if not sys.executable.lower().startswith(os.path.normcase(venv_path).lower()):
+#             if os.path.exists(venv_python) and sys.executable.lower() != os.path.normcase(venv_python).lower():
+#                 if not os.getenv("WSL_DISTRO_NAME"):
+#                     print(f"Re-executing under project venv: {venv_python}")
+#                     os.execv(venv_python, [venv_python] + sys.argv)
+# except Exception:
+#     # Best-effort only; if this fails, continue with the current interpreter
+#     pass
 
 # Compatibility shim: some Python envs (conda/mixed installs) can cause
 # stdlib importlib.metadata.version(...) to raise or return None for some
@@ -66,32 +58,17 @@ except Exception:
     # naturally; this shim is best-effort for problematic envs.
     pass
 
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma
-# NOTE: We import Chroma lazily inside load_vectorstore() to avoid initializing
-# the chromadb rust extension and telemetry threads at module import time,
-# which can cause native crashes on some Windows environments.
-try:
-    # Prefer langchain_core for newer versions
-    from langchain_core.messages import HumanMessage  # type: ignore
-except Exception:
-    try:
-        # Fallback to older langchain API
-        from langchain.schema import HumanMessage  # type: ignore
-    except Exception:
-        # Last resort: minimal shim (not recommended for production)
-        from langchain_core.messages import BaseMessage
-        class HumanMessage(BaseMessage):
-            def __init__(self, content: str):
-                super().__init__(content=content, type="human")
+from openai import OpenAI as OpenAIClient
+from llama_index.core import Settings, StorageContext, load_index_from_storage
+from llama_index.embeddings.openai import OpenAIEmbedding
 
 from agent_tools import run_tools
 from planner import plan_tools
 
-CHROMA_DIR = "db/books"
+# LlamaIndex config
+INDEX_DIR = "db/books"
 EMBED_MODEL = "text-embedding-3-large"
 # Use a stable, lower-latency model by default to avoid stalls if a premium model is unavailable.
-# You can override this via environment or by editing this file.
 DECISION_MODEL = "gpt-5.1"
 
 # Configure basic logging. Set AGENT_LOG_LEVEL=DEBUG to enable verbose logs.
@@ -99,35 +76,55 @@ logging.basicConfig(level=os.getenv("AGENT_LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 
+class RAGIndex:
+    """Wrapper around LlamaIndex to provide similarity_search interface."""
+    
+    def __init__(self, index):
+        self._index = index
+        self._retriever = index.as_retriever(similarity_top_k=6)
+    
+    def similarity_search(self, query: str, k: int = 6) -> List:
+        """Retrieve k most similar documents for the query."""
+        self._retriever = self._index.as_retriever(similarity_top_k=k)
+        nodes = self._retriever.retrieve(query)
+        # Convert NodeWithScore to a doc-like format
+        return [_NodeAsDoc(n) for n in nodes]
+
+
+class _NodeAsDoc:
+    """Adapter to make LlamaIndex nodes look like LangChain docs."""
+    
+    def __init__(self, node_with_score):
+        self.node = node_with_score.node
+        self.score = node_with_score.score
+        self.page_content = self.node.get_content()
+        self.metadata = dict(self.node.metadata) if self.node.metadata else {}
+
+
 def load_vectorstore() -> Any:
+    """Load the LlamaIndex vector store from disk."""
     from types import SimpleNamespace
 
-    embeddings = OpenAIEmbeddings(model=EMBED_MODEL)
     try:
-        return Chroma(
-            embedding_function=embeddings,
-            persist_directory=CHROMA_DIR,
-        )
+        Settings.embed_model = OpenAIEmbedding(model=EMBED_MODEL)
+        storage_context = StorageContext.from_defaults(persist_dir=INDEX_DIR)
+        index = load_index_from_storage(storage_context)
+        logger.info("Loaded LlamaIndex from %s", INDEX_DIR)
+        return RAGIndex(index)
     except Exception as e:
-        # Chroma (rust extension) can crash or fail to import on some Windows
-        # environments. Fall back to a dummy vectorstore that returns no docs
-        # to allow the agent to continue running without RAG functionality.
-        logger.warning("Could not initialize Chroma vectorstore: %s. Falling back to empty vectorstore.", e)
+        logger.warning("Could not load LlamaIndex: %s. Falling back to empty index.", e)
 
         def _empty_search(q, k=6):
             return []
 
-        def _empty_search_with_score(q, k=6):
-            return []
-
-        return SimpleNamespace(similarity_search=_empty_search, similarity_search_with_score=_empty_search_with_score)
+        return SimpleNamespace(similarity_search=_empty_search)
 
 
 def _format_docs(docs: List) -> str:
     parts = []
     for d in docs:
-        book_name = d.metadata.get("book_name", d.metadata.get("source", "unknown"))
-        page = d.metadata.get("page", "?")
+        book_name = d.metadata.get("book_name", d.metadata.get("file_name", d.metadata.get("source", "unknown")))
+        page = d.metadata.get("page_label", d.metadata.get("page", "?"))
         parts.append(
             f"[Book: {book_name}, page {page}]\n{d.page_content.strip()}"
         )
@@ -845,8 +842,7 @@ def analyze_trade_agent(
     has_ml = ml_result and not ml_result.get("error")
     ml_predictions_text = _format_ml_predictions(ml_result) if has_ml else ""
 
-    # 4) Final decision LLM
-    llm = ChatOpenAI(model=DECISION_MODEL)
+    # 4) Final decision LLM (using OpenAI SDK directly)
     symbol_str = symbol or "N/A"
 
     system_prompt = """
@@ -1129,92 +1125,41 @@ Using ONLY the information above:
 If the data is insufficient, explicitly say so and lean toward "UNCLEAR".
 """.strip()
 
-    messages = [HumanMessage(content=system_prompt + "\n\n" + user_prompt)]
-    # Robust caller: some LangChain LLM wrappers are not directly callable.
-    class _LLMRespShim:
-        def __init__(self, content: str):
-            self.content = content
-
-    def _call_llm_local(llm_obj, messages):
-        # Attempt to call the LLM but bound it with a timeout to avoid indefinite hangs.
+    # Call OpenAI directly (no LangChain)
+    def _call_openai(system: str, user: str) -> str:
+        """Call OpenAI chat completion API with timeout handling."""
         start_ts = time.time()
-        logger.info("LLM call starting (model=%s)", getattr(llm_obj, 'model', DECISION_MODEL))
+        logger.info("LLM call starting (model=%s)", DECISION_MODEL)
+        
+        client = OpenAIClient()
+        timeout_sec = int(os.getenv('LLM_CALL_TIMEOUT_SEC', '120'))
+        
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                # Use .invoke() method for ChatOpenAI objects (LangChain 0.1.0+)
-                fut = ex.submit(lambda: llm_obj.invoke(messages))
+                fut = ex.submit(
+                    lambda: client.chat.completions.create(
+                        model=DECISION_MODEL,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user},
+                        ],
+                        timeout=timeout_sec,
+                    )
+                )
                 try:
-                    out = fut.result(timeout=int(os.getenv('LLM_CALL_TIMEOUT_SEC', '120')))
+                    response = fut.result(timeout=timeout_sec + 10)
                 except concurrent.futures.TimeoutError:
                     fut.cancel()
-                    raise TimeoutError("LLM call timed out after {} seconds".format(os.getenv('LLM_CALL_TIMEOUT_SEC', '120')))
-
-            if hasattr(out, "content"):
-                logger.info("LLM call succeeded in %.2fs", time.time() - start_ts)
-                return out
-            if isinstance(out, str):
-                logger.info("LLM returned raw string in %.2fs", time.time() - start_ts)
-                return _LLMRespShim(out)
-            if hasattr(out, "generations"):
-                try:
-                    text = out.generations[0][0].text
-                except Exception:
-                    try:
-                        text = out.generations[0][0].message.content
-                    except Exception:
-                        text = str(out)
-                logger.info("LLM returned generations in %.2fs", time.time() - start_ts)
-                return _LLMRespShim(text)
+                    raise TimeoutError(f"LLM call timed out after {timeout_sec} seconds")
+            
+            content = response.choices[0].message.content
+            logger.info("LLM call succeeded in %.2fs", time.time() - start_ts)
+            return content
         except Exception as e:
-            logger.exception("Primary LLM call failed: %s", e)
+            logger.exception("LLM call failed: %s", e)
+            raise
 
-        # Try common alternate methods
-        combined_text = None
-        try:
-            combined_text = "\n\n".join([m.content for m in messages if hasattr(m, 'content')])
-        except Exception:
-            combined_text = None
-
-        for method in ("predict_messages", "predict", "generate", "invoke", "chat", "complete"):
-            if hasattr(llm_obj, method):
-                try:
-                    fn = getattr(llm_obj, method)
-                    out = None
-                    if combined_text is not None:
-                        try:
-                            out = fn([combined_text])
-                        except Exception:
-                            out = None
-                    if out is None and combined_text is not None:
-                        try:
-                            out = fn(combined_text)
-                        except Exception:
-                            out = None
-                    if out is None:
-                        try:
-                            out = fn(messages)
-                        except Exception:
-                            out = None
-
-                    if isinstance(out, str):
-                        return _LLMRespShim(out)
-                    if hasattr(out, "content"):
-                        return out
-                    if hasattr(out, "generations"):
-                        try:
-                            text = out.generations[0][0].text
-                        except Exception:
-                            text = str(out)
-                        return _LLMRespShim(text)
-                    if isinstance(out, list) and out and hasattr(out[0], "content"):
-                        return out[0]
-                except Exception:
-                    continue
-
-        raise TypeError("LLM object is not callable and no compatible method found")
-
-    resp = _call_llm_local(llm, messages)
-    return resp.content
+    return _call_openai(system_prompt, user_prompt)
 
 
 if __name__ == "__main__":

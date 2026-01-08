@@ -3,7 +3,7 @@
 ## Architecture Overview
 
 This is a **RAG-enhanced trading decision agent** that combines:
-1. **Vector store of trading books** (`db/books/` Chroma DB) for retrieval-augmented generation
+1. **Vector store of trading books** (`db/books/` LlamaIndex) for retrieval-augmented generation
 2. **LLM-based planner** (`planner.py`) that dynamically selects market data tools
 3. **Tool registry pattern** (`tools.py`) for Alpha Vantage API calls and FinBERT sentiment
 4. **Decision agent** (`analyze_trade_agent.py`) that synthesizes all inputs into trade recommendations
@@ -39,12 +39,14 @@ User Query → RAG Search (trading books) → Planner (selects tools)
 - **Tool Selection**: Selects all relevant tools for comprehensive analysis (typically 5-6 tools)
 
 ### 3. Vector Store (`build_vectorstore.py`)
-- **Location**: `db/books/` (Chroma with SQLite)
+- **Framework**: LlamaIndex with VectorStoreIndex
+- **Location**: `db/books/` (persisted to disk)
 - **Source**: PDF trading books in `data/books/`
 - **Embeddings**: OpenAI `text-embedding-3-large`
-- **Chunking**: 1200 chars with 150 overlap
-- **Metadata**: Each chunk has `book_name`, `page`, `source`
+- **Chunking**: SentenceSplitter with 1200 chars, 150 overlap
+- **Metadata**: Each chunk has `book_name`, `page_label`, `file_name`
 - **Rebuild**: Run `python build_vectorstore.py` when adding new books
+- **Loading**: Use `load_index_from_storage()` in `analyze_trade_agent.py`
 
 ### 4. Decision Agent (`analyze_trade_agent.py`)
 - **RAG Strategy**: Two searches per query:
@@ -64,8 +66,8 @@ ALPHAVANTAGE_API_KEY=...
 ```
 
 ### Dependencies
-- LangChain: `langchain-openai`, `langchain-community`
-- Vector DB: `chromadb`
+- LlamaIndex: `llama-index`, `llama-index-embeddings-openai`, `llama-index-llms-openai`
+- OpenAI SDK: `openai` (for LLM calls)
 - ML: `torch`, `transformers` (for FinBERT sentiment)
 - Web scraping: `beautifulsoup4`, `requests`
 - Document loading: `pypdf` (for PDF parsing)

@@ -10,13 +10,25 @@ import joblib
 from pathlib import Path
 from typing import Dict, List, Any
 
-# Add ml_models to path
+# Add ml_models to path - MUST be first to avoid config.py conflicts
 try:
     ml_models_path = Path(__file__).parent / "ml_models"
 except NameError:
     # If __file__ not defined (e.g., running in REPL), use cwd
     ml_models_path = Path.cwd() / "ml_models"
-sys.path.insert(0, str(ml_models_path))
+
+# CRITICAL: Remove live_testing from path and ensure ml_models is FIRST
+# This prevents importing live_testing/config.py instead of ml_models/config.py
+original_path = sys.path.copy()
+sys.path = [str(ml_models_path)] + [p for p in sys.path if 'live_testing' not in p.lower()]
+
+# Also clear any cached imports of config module that might be wrong
+if 'config' in sys.modules:
+    # Check if it's the wrong config (from live_testing)
+    if hasattr(sys.modules['config'], '__file__'):
+        config_file = sys.modules['config'].__file__
+        if config_file and 'live_testing' in config_file:
+            del sys.modules['config']
 
 try:
     from feature_engineering import engineer_features

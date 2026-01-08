@@ -1,235 +1,277 @@
 # Agentic AI Trader
 
-RAG-enhanced trading decision agent that combines vector store of trading books, regime clustering models (Wasserstein & HMM), supervised ML predictions, and LLM-based planning with dynamic tool execution.
+A RAG-enhanced trading decision agent that combines retrieval-augmented generation with real-time market analysis tools. Features a validated VIX Rate-of-Change strategy and a self-critiquing Reflexion agent pattern.
+
+## Overview
+
+This project implements an intelligent trading assistant that:
+
+1. **Retrieves wisdom from trading books** using a vector store (LlamaIndex)
+2. **Analyzes market conditions** with multiple data tools (Polygon.io, FinBERT sentiment)
+3. **Assesses risk** using a walk-forward validated VIX ROC strategy
+4. **Makes decisions** through a Reflexion agent pattern with self-critique
+
+## Key Features
+
+### VIX ROC Three-Tier Strategy ⭐
+
+A market timing overlay based on VIX Rate-of-Change, not absolute VIX level.
+
+**Core Insight**: Exit when VIX is *accelerating* (panic phase), re-enter when VIX is *decelerating* (even if still elevated).
+
+| Tier | Asset Type | Exit Threshold | Re-entry | Validation |
+|------|------------|----------------|----------|------------|
+| **Tier 1** | Value/Cyclical (SPY, XLF, XLE) | VIX ROC > 50% | < +15% | 7/7 wins |
+| **Tier 2** | Growth/Tech (QQQ, AAPL, GOOGL) | VIX ROC > 20% | < 0% | 5/5 wins |
+| **Tier 3** | Mega-Cap Tech (NVDA, MSFT) | VIX ROC > 75% | < -10% | 3/3 wins |
+
+**Walk-Forward Results (2020-2024 Out-of-Sample)**:
+- **15/15 wins** across all tested assets
+- Average excess return: **+39%** (Tier 1), **+20%** (Tier 2), **+140%** (Tier 3)
+- Significant drawdown reduction during COVID crash, 2022 bear market
+
+### Volatility Prediction Tool
+
+Predicts volatility regime transitions for position sizing:
+
+- **VIX z-score** as primary predictor (works across all assets)
+- **HIGH→LOW transitions**: 65-71% precision
+- **LOW→HIGH (spikes)**: 45-62% precision at 0.6 threshold
+- Asset-agnostic: trained on SPY, transfers to other equities
+
+### Reflexion Agent Pattern
+
+Implements the 4-step Reflexion pattern (Shinn et al., 2023):
+
+1. **GENERATE**: Initial analysis with RAG + market data
+2. **EVALUATE**: Self-critique for blind spots and overconfidence
+3. **REFLECT**: Extract learnings from the critique
+4. **REFINE**: Generate improved final decision
+
+## Architecture
+
+```
+User Query → RAG Search (trading books) → Planner (tool selection)
+           → Tool Execution (market data) → Reflexion Agent
+           → Self-Critique → Final Decision
+```
+
+### Core Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **Reflexion Agent** | `analyze_trade_agent_reflexion.py` | Main decision engine with self-critique |
+| **Tool Registry** | `tools.py` | All market data and analysis tools |
+| **Planner** | `planner.py` | LLM-based dynamic tool selection |
+| **VIX ROC Strategy** | `models/vix_roc_production.py` | Production risk overlay |
+| **Vol Prediction** | `vol_prediction_tool.py` | Volatility regime prediction |
+| **Paper Trading** | `live_testing/paper_trader_new.py` | Forward testing system |
+
+## Quick Start
+
+### Installation
+
+```bash
+# Clone repository
+git clone https://github.com/yourusername/agentic_ai_trader.git
+cd agentic_ai_trader
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your API keys:
+# - OPENAI_API_KEY
+# - POLYGON_API_KEY
+```
+
+### Build Vector Store (Optional)
+
+If you have trading books in `data/books/`:
+
+```bash
+python build_vectorstore.py
+```
+
+### Run the Agent
+
+```bash
+# Interactive trading analysis
+python analyze_trade_agent_reflexion.py
+
+# Example session:
+# > Enter trading idea: Should I buy NVDA on this dip?
+# > Enter symbol: NVDA
+# [Agent analyzes with VIX ROC, vol prediction, sentiment, RAG...]
+# [4-step Reflexion: Generate → Critique → Reflect → Refine]
+# > VERDICT: ATTRACTIVE IF STRICT RULES ARE FOLLOWED
+```
+
+### Paper Trading
+
+```bash
+cd live_testing
+
+# Reset and start fresh
+python paper_trader_new.py --reset
+
+# Run daily trading decisions
+python paper_trader_new.py
+
+# Check status
+python paper_trader_new.py --status
+```
+
+## Test Results
+
+### VIX ROC Strategy Performance (2020-2024)
+
+**Tier 1: Value/Cyclical Assets**
+| Asset | Buy & Hold | Strategy | Excess Return | Max DD Improvement |
+|-------|------------|----------|---------------|-------------------|
+| SPY | +94.6% | +111.5% | **+17.0%** | +6.4% |
+| DIA | +62.0% | +88.5% | **+26.4%** | +11.8% |
+| IWM | +42.2% | +81.0% | **+38.8%** | +5.4% |
+| XLF | +71.6% | +114.9% | **+43.3%** | +15.7% |
+| XLE | +76.3% | +133.0% | **+56.7%** | +20.2% |
+
+**Tier 2: Growth/Tech Assets**
+| Asset | Buy & Hold | Strategy | Excess Return |
+|-------|------------|----------|---------------|
+| QQQ | +143.9% | +169.2% | **+25.4%** |
+| AAPL | +244.0% | +263.7% | **+19.7%** |
+| GOOGL | +177.6% | +200.4% | **+22.8%** |
+| AMZN | +131.2% | +158.7% | **+27.6%** |
+
+**Tier 3: Mega-Cap Tech (Ultra-Conservative)**
+| Asset | Buy & Hold | Strategy | Excess Return |
+|-------|------------|----------|---------------|
+| NVDA | +2148.4% | +2445.3% | **+296.9%** |
+| MSFT | +174.4% | +234.1% | **+59.7%** |
+| META | +180.2% | +242.8% | **+62.7%** |
+
+### Volatility Prediction Accuracy
+
+| Transition | Precision | Recall | Notes |
+|------------|-----------|--------|-------|
+| HIGH → LOW | 65-71% | ~60% | Most reliable signal |
+| LOW → HIGH | 45-62% | ~40% | At 0.6 probability threshold |
+| Any transition | ~34% | - | Not just "stay same" |
+
+**Key Features Used**:
+1. VIX z-score (primary predictor)
+2. VIX momentum (5-day)
+3. Asset realized volatility
+4. Recent drawdown
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `vix_roc_risk` | VIX ROC signal for single asset |
+| `vix_roc_portfolio_risk` | Portfolio-level VIX ROC assessment |
+| `vol_prediction` | Volatility regime transition probabilities |
+| `alpha_vantage_price_data` | OHLCV with volume analysis |
+| `alpha_vantage_rsi` | Relative Strength Index |
+| `alpha_vantage_atr` | Average True Range |
+| `bollinger_bands` | Bollinger Bands with %B |
+| `news_sentiment_finviz_finbert` | FinBERT sentiment from Finviz |
 
 ## Project Structure
 
 ```
 agentic_ai_trader/
-├── analyze_trade_agent.py      # Main trading agent entry point
-├── planner.py                   # LLM-based dynamic tool selection
-├── tools.py                     # Tool registry (Alpha Vantage, FinBERT)
-├── agent_tools.py              # Tool execution hub
-├── build_vectorstore.py        # Trading books vector store builder
-├── polygon_tools.py            # Polygon.io market data tools
-├── research_tools.py           # Research agent integration
-├── sentiment_tools.py          # Sentiment analysis tools
-├── ml_prediction_tool.py       # ML prediction models integration
-│
-├── models/                     # Regime detection models
-│   ├── paper_wasserstein_regime_detection.py   # Paper-faithful Wasserstein k-means
-│   └── rolling_hmm_regime_detection.py         # Professional rolling HMM
-│
-├── ml_models/                  # Supervised ML prediction models
-│   ├── saved_models/           # Trained model files (4 models)
-│   ├── data/                   # Training data and features
-│   ├── results/                # Backtest results and metrics
-│   ├── backtest.py            # Walk-forward backtesting
-│   ├── breadth_features.py    # Market breadth indicators
-│   └── build_sentiment_*.py   # Sentiment database builders
-│
-├── data/                       # Trading books and source data
-├── db/                         # Vector store (Chroma DB)
-│   └── books/                  # Trading book embeddings
-│
-├── docs/                       # Documentation
-│   ├── WASSERSTEIN_VS_HMM_VERDICT.md          # Comprehensive comparison results
-│   ├── GPT_RESEARCHER_INTEGRATION.md          # Research agent docs
-│   ├── PROFESSIONAL_HMM_APPROACH.md           # HMM methodology
-│   ├── POLYGON_MIGRATION.md                   # API migration notes
-│   └── RESEARCH_FEATURE.md                    # Research features
-│
-├── tests/                      # Test scripts and comparisons
-├── results/                    # Test results, logs, JSON outputs
-├── scratch/                    # Development experiments
-├── scripts/                    # Utility scripts
-└── research_reports/           # Generated research reports
-
+├── analyze_trade_agent_reflexion.py  # Main Reflexion agent
+├── planner.py                         # LLM tool selection
+├── tools.py                           # Tool registry (~1400 lines)
+├── vol_prediction_tool.py             # Volatility prediction
+├── agent_tools.py                     # Tool execution hub
+├── build_vectorstore.py               # Vector store setup
+├── models/
+│   ├── vix_roc_production.py          # VIX ROC strategy (~950 lines)
+│   ├── rolling_hmm_regime_detection.py # HMM regime (archived)
+│   └── paper_wasserstein_regime_detection.py # Wasserstein (archived)
+├── live_testing/
+│   ├── paper_trader_new.py            # Forward paper trading
+│   ├── strategies_new.py              # Strategy implementations
+│   ├── config_new.py                  # Configuration
+│   └── portfolio_tracker.py           # Portfolio management
+├── docs/
+│   ├── VIX_ROC_STRATEGY.md            # Strategy documentation
+│   ├── RESEARCH_FEATURE.md            # Research capabilities
+│   └── POLYGON_MIGRATION.md           # Data provider setup
+└── tests/                             # Test suite
 ```
 
-## Core Components
+## Environment Variables
 
-### Main Agent
-- **analyze_trade_agent.py**: Orchestrates RAG search → planner → tool execution → decision
-- **planner.py**: GPT-based tool selection (returns JSON tool calls)
-- **tools.py**: Tool registry with market data, sentiment, **and regime detection**
-- **agent_tools.py**: Rate limiting and tool execution
-
-### Regime Detection Models (Integrated as Agent Tools)
-
-**New**: Both regime detection methods are now available as tools in the main agent. The LLM dynamically selects which method(s) to use based on:
-- Stock type (tech/healthcare → Wasserstein, stable → HMM)
-- Question type (volatility → Wasserstein, trend → HMM)
-- Confidence needs (both + consensus check for high conviction)
-
-See [docs/REGIME_DETECTION_AGENT_GUIDE.md](docs/REGIME_DETECTION_AGENT_GUIDE.md) for detailed decision framework.
-
-#### Paper-Faithful Wasserstein (`models/paper_wasserstein_regime_detection.py`)
-- Implements Horvath et al. (2021) Algorithm 1
-- **Median barycenters** (not mean) for robustness
-- Fast 1D Wasserstein distance (O(N log N))
-- MMD cluster quality evaluation
-- Empirical distributions approach
-
-**Performance**:
-- Mean Sharpe improvement: +0.013 (12 stocks)
-- Best on: MSFT (+0.233), JNJ (+0.246), BAC (+0.127)
-- Mixed vs HMM: 50% win rate, +22% average Sharpe
-
-#### Rolling HMM (`models/rolling_hmm_regime_detection.py`)
-- Forward-filter only (no retroactive relabeling)
-- Frozen parameters after training
-- Persistent transition matrix initialization
-- Volatility-based state mapping
-
-**Performance**:
-- Competitive with Wasserstein
-- Better on some stocks (AAPL)
-- More stable label consistency
-
-### ML Prediction Models
-
-**Supervised learning models for 5-day return prediction**, integrated as agent tool (`ml_prediction`).
-
-#### Models
-- **Random Forest**: Ensemble of decision trees (best Sharpe: 1.52)
-- **XGBoost**: Gradient boosting (Sharpe: 1.34)
-- **Logistic Regression**: Linear classifier (Sharpe: 0.89)
-- **Decision Tree**: Single tree baseline (Sharpe: 0.78)
-
-#### Features (125 total after pruning)
-- **Technical**: RSI, MACD, Bollinger Bands, SMAs, EMAs, ATR
-- **Fundamental**: P/E, EPS growth, margins, ROE, market cap
-- **Regime**: HMM states, Wasserstein regimes, transition probabilities
-- **Sentiment**: GDELT news sentiment (8 features, zero-filled if unavailable)
-- **Volatility**: Realized vol, ATR, VIX features, options proxy
-- **Market Relative**: Beta, alpha, correlation with SPY
-- **Advanced**: Kalman filters, wavelets, macro correlations
-
-#### Training
-- **Universe**: 25 stocks across growth/value/momentum/defensive/volatility
-- **Period**: 2020-2025 (5 years including COVID, bull/bear cycles)
-- **Methodology**: Walk-forward validation, hyperparameter tuning with Optuna
-- **Feature Selection**: Dropped 46 low-importance features for noise reduction
-
-#### Performance
-- **Mean Sharpe**: 1.34 across all models and stocks
-- **Best Model**: Random Forest (Sharpe 1.52, Win Rate 17.9%)
-- **Consensus System**: Aggregates 4 model predictions with confidence weighting
-- **Position Sizing**: Adjusts based on consensus strength (STRONG/MODERATE/WEAK)
-
-#### Graceful Degradation
-- **Missing Features**: Automatically zero-fills missing sentiment features
-- **Error Handling**: Falls back gracefully when data unavailable
-- **Timeout Protection**: 30-second limit on feature engineering
-
-See [`ml_prediction_tool.py`](ml_prediction_tool.py) for implementation and [`docs/ML_DISPLAY_ENHANCEMENT.md`](docs/ML_DISPLAY_ENHANCEMENT.md) for integration details.
-
-### Vector Store
-- **Location**: `db/books/`
-- **Source**: PDF trading books in `data/books/`
-- **Embeddings**: OpenAI `text-embedding-3-large`
-- **Rebuild**: `python build_vectorstore.py`
-
-## Environment Setup
-
-### Required API Keys (`.env`)
-```
-OPENAI_API_KEY=sk-...
-POLYGON_API_KEY=...
-ALPHAVANTAGE_API_KEY=... (optional)
-```
-
-### Installation
 ```bash
-pip install -r requirements.txt
-pip install -r requirements_hmm.txt  # For HMM models
+# Required
+OPENAI_API_KEY=sk-...          # For LLM calls
+POLYGON_API_KEY=...            # For market data
+
+# Optional
+ALPHAVANTAGE_API_KEY=...       # Alternative data source
+AGENT_LOG_LEVEL=INFO           # Logging level
 ```
 
-## Usage
+## Dependencies
 
-### Run Main Agent
-```bash
-python analyze_trade_agent.py
+- **LlamaIndex**: Vector store and RAG
+- **OpenAI**: LLM for planning and decisions
+- **Polygon.io**: Real-time market data
+- **yfinance**: VIX data and fallback
+- **scikit-learn**: Volatility prediction models
+- **PyTorch/Transformers**: FinBERT sentiment (optional)
+
+## Development Notes
+
+### Adding New Tools
+
+```python
+# In tools.py
+def my_tool_fn(state: dict, args: dict) -> dict:
+    result = do_analysis(args["symbol"])
+    state["tool_results"]["my_tool"] = result
+    return state
+
+register_tool({
+    "name": "my_tool",
+    "description": "What this tool does",
+    "parameters": {"symbol": "Stock ticker"},
+    "fn": my_tool_fn
+})
 ```
-Interactive loop: Enter trading idea → symbol → get analysis
-
-The agent provides comprehensive analysis including:
-- Price trends and technical indicators
-- Fundamental metrics and earnings analysis
-- Regime classification (volatility and trend)
-- News sentiment analysis
-- **ML model predictions** (5-day horizon with consensus)
-- Position sizing and risk management recommendations
-- Final verdict with confidence level
-
-### Test Regime Models
-```bash
-# Wasserstein stability test
-python tests/test_paper_wasserstein_stability.py --symbol AAPL --start-date 2020-01-01
-
-# HMM vs Wasserstein comparison
-python tests/final_wasserstein_vs_hmm.py --symbol MSFT
-
-# Multi-stock backtest
-python tests/test_paper_wasserstein_backtest.py --sectors --start-date 2020-01-01
-```
-
-## Key Findings
-
-### Wasserstein vs HMM Verdict
-**Neither is universally superior.** Use ensemble approach.
-
-- **Wasserstein excels**: Tech/healthcare stocks with distinct volatility regimes
-- **HMM excels**: Smooth transitions, probabilistic predictions
-- **Performance paradox**: Better when label consistency is LOW (adaptive)
-- **MMD issue**: All stocks show poor cluster separation (~1.0 ratio)
-
-See [docs/WASSERSTEIN_VS_HMM_VERDICT.md](docs/WASSERSTEIN_VS_HMM_VERDICT.md) for full analysis.
-
-## Development
-
-### Testing
-All test scripts in `tests/` folder:
-- `test_paper_wasserstein_*.py` - Wasserstein tests
-- `test_rolling_hmm_*.py` - HMM tests
-- `compare_*.py` - Head-to-head comparisons
-- `debug_*.py` - Debugging utilities
-
-### Results
-All outputs in `results/` folder:
-- JSON files: Test results, backtests, comparisons
-- Log files: Detailed execution logs
-- PNG files: Visualization outputs
-
-## Architecture Notes
-
-### Tool Registry Pattern
-All tools follow: `fn(state: dict, args: dict) -> dict`
-- State stored in `state["tool_results"][tool_name]`
-- Registration via `register_tool()` with `ToolSpec`
 
 ### Rate Limiting
-Smart rate limiter in `agent_tools.py`:
-- Tracks API call timestamps
-- Only delays when necessary
-- Respects 5 calls/min limits
 
-### RAG Strategy
-Two searches per query:
-1. **Idea-specific**: k=6 chunks matching query + symbol
-2. **Risk management**: k=6 chunks about discipline/psychology
+The system handles API rate limits automatically:
+- Alpha Vantage: 5 calls/minute (free tier)
+- Polygon.io: Varies by plan
+- OpenAI: Automatic retry with backoff
+
+## Archived Models
+
+The following models are kept for reference but not actively used (deprecated due to lack of alpha generation):
+
+- **HMM Regime Detection** (`models/rolling_hmm_regime_detection.py`)
+- **Wasserstein Regime Detection** (`models/paper_wasserstein_regime_detection.py`)
+- **ML Prediction Models** (`ml_models/`)
+
+The VIX ROC strategy proved more effective and simpler to maintain.
 
 ## License
-This project is licensed under the MIT License.
-See the LICENSE file for details.
 
-## Disclaimer
-This project is provided for research and educational purposes only.  
-It is not financial or investment advice. Trading involves significant risk of loss.
+MIT License - See [LICENSE](LICENSE) for details.
 
+## Contributing
 
-## References
+Contributions welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request with tests
 
-- Horvath et al. (2021): "Clustering Market Regimes using the Wasserstein Distance"
-- Trading books in `data/books/`
+## Author
+
+Agentic AI Trader - January 2026

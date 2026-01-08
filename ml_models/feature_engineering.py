@@ -6,7 +6,15 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List
 import warnings
+import sys
+import os
 warnings.filterwarnings('ignore')
+
+# Ensure we import from ml_models/config.py, not live_testing/config.py
+_ml_models_dir = os.path.dirname(os.path.abspath(__file__))
+# Remove any conflicting paths and insert ml_models first
+sys.path = [p for p in sys.path if 'live_testing' not in p]
+sys.path.insert(0, _ml_models_dir)
 
 from config import TECHNICAL_PARAMS, FEATURE_GROUPS, PREDICTION_HORIZONS, VERBOSE
 

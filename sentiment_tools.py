@@ -17,16 +17,17 @@ logger = logging.getLogger(__name__)
 
 # Optional ML imports for FinBERT sentiment
 _TORCH_WARNING_SHOWN = False
+_TORCH_AVAILABLE = False
 try:
     import torch
     import torch.nn.functional as F
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
     _TORCH_AVAILABLE = True
-except ImportError:
-    _TORCH_AVAILABLE = False
+except (ImportError, OSError) as e:
+    # OSError can occur with DLL loading issues on Windows
     # Only show warning once instead of on every import
     if not _TORCH_WARNING_SHOWN:
-        logger.info("Note: torch/transformers not installed. FinBERT sentiment will use basic classification. Install with: pip install torch transformers")
+        logger.info(f"Note: torch/transformers not available ({type(e).__name__}). FinBERT sentiment will use basic classification.")
         _TORCH_WARNING_SHOWN = True
 
 # =============================================================================

@@ -1,12 +1,22 @@
 # build_vectorstore.py
+"""
+Build a LlamaIndex vector store from trading books (PDFs).
+Stores the index to disk in db/books/ for retrieval by the agent.
+"""
 
 import os
 from pathlib import Path
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import Chroma
+from llama_index.core import (
+    SimpleDirectoryReader,
+    VectorStoreIndex,
+    Settings,
+    StorageContext,
+    load_index_from_storage,
+)
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
 
 from dotenv import load_dotenv
 
@@ -14,8 +24,8 @@ load_dotenv()
 
 # ----- CONFIG -----
 BOOKS_DIR = Path("data/books")
-CHROMA_DIR = "db/books"
-EMBED_MODEL = "text-embedding-3-large"  # good quality; you can switch later
+INDEX_DIR = "db/books"
+EMBED_MODEL = "text-embedding-3-large"
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 150
 
@@ -23,96 +33,83 @@ CHUNK_OVERLAP = 150
 def clean_text(s: str) -> str:
     """
     Remove invalid Unicode surrogate code points (e.g. '\\ud835') and other
-    non-UTF8-encodable oddities that can crash Chroma upserts.
+    non-UTF8-encodable oddities that can crash during indexing.
     """
     if s is None:
         return ""
-    # 'surrogatepass' allows encoding even if surrogates exist, then 'ignore'
-    # drops any characters that cannot be decoded back cleanly.
     return s.encode("utf-8", "surrogatepass").decode("utf-8", "ignore")
 
 
-def load_pdfs(books_dir: Path):
-    docs = []
-    for pdf_path in books_dir.glob("*.pdf"):
-        print(f"📚 Loading {pdf_path.name} ...")
-        loader = PyPDFLoader(str(pdf_path))
-
-        # Each page is a Document with metadata like {"source": "...", "page": n}
-        pdf_docs = loader.load()
-
-        # Tag which book it came from + sanitize text early (best for stable chunking)
-        for d in pdf_docs:
-            d.metadata["book_name"] = pdf_path.stem
-            d.page_content = clean_text(d.page_content)
-
-        docs.extend(pdf_docs)
-
-    print(f"✅ Loaded {len(docs)} pages total.")
-    return docs
-
-
-def split_docs(docs):
-    print("✂️  Splitting into chunks ...")
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ".", " ", ""],
-    )
-    chunks = splitter.split_documents(docs)
-    print(f"✅ Created {len(chunks)} chunks.")
-    return chunks
-
-
-def build_vectorstore(chunks):
-    print("🧠 Building vector store (batched) ...")
-    embeddings = OpenAIEmbeddings(model=EMBED_MODEL)
-
-    # Initialize (or reuse) the Chroma collection
-    vectordb = Chroma(
-        embedding_function=embeddings,
-        persist_directory=CHROMA_DIR,
-    )
-
-    texts = [c.page_content for c in chunks]
-    metadatas = [c.metadata for c in chunks]
-
-    batch_size = 128  # keep this conservative to avoid hitting token limits
-
-    for i in range(0, len(texts), batch_size):
-        batch_texts = texts[i : i + batch_size]
-        batch_metas = metadatas[i : i + batch_size]
-
-        # Log any problematic strings (should be rare after early cleaning)
-        for j, t in enumerate(batch_texts):
-            try:
-                t.encode("utf-8")
-            except UnicodeEncodeError as e:
-                m = batch_metas[j] if j < len(batch_metas) else {}
-                print(
-                    f"⚠️  Bad UTF-8 in book={m.get('book_name')} "
-                    f"page={m.get('page')} source={m.get('source')} "
-                    f"batch={i // batch_size + 1} item={j}: {e}"
-                )
-
-        # Safety-net sanitize again (in case anything slipped through)
-        batch_texts = [clean_text(t) for t in batch_texts]
-
-        print(f"➕ Adding batch {i // batch_size + 1} ({len(batch_texts)} chunks)...")
-        vectordb.add_texts(batch_texts, metadatas=batch_metas)
-
-    vectordb.persist()
-    print(f"💾 Vector store saved to: {CHROMA_DIR}")
-    return vectordb
-
-
-def main():
+def build_vectorstore():
+    """Build and persist a LlamaIndex VectorStoreIndex from PDF trading books."""
+    
     if not BOOKS_DIR.exists():
         raise FileNotFoundError(f"Books directory not found: {BOOKS_DIR}")
 
-    docs = load_pdfs(BOOKS_DIR)
-    chunks = split_docs(docs)
-    build_vectorstore(chunks)
+    # Configure LlamaIndex settings
+    Settings.embed_model = OpenAIEmbedding(model=EMBED_MODEL)
+    Settings.llm = OpenAI(model="gpt-4o-mini")  # For any query synthesis
+    Settings.chunk_size = CHUNK_SIZE
+    Settings.chunk_overlap = CHUNK_OVERLAP
+
+    # Load PDF documents
+    print(f"📚 Loading PDFs from {BOOKS_DIR} ...")
+    reader = SimpleDirectoryReader(
+        input_dir=str(BOOKS_DIR),
+        required_exts=[".pdf"],
+        recursive=False,
+    )
+    documents = reader.load_data()
+    print(f"✅ Loaded {len(documents)} document pages total.")
+
+    # Clean text content and add metadata
+    # LlamaIndex Documents are immutable, so we create new ones with cleaned text
+    from llama_index.core.schema import Document
+    cleaned_documents = []
+    for doc in documents:
+        cleaned_text = clean_text(doc.get_content())
+        metadata = dict(doc.metadata) if doc.metadata else {}
+        # Add book_name metadata from filename
+        if "file_name" in metadata:
+            metadata["book_name"] = Path(metadata["file_name"]).stem
+        cleaned_documents.append(Document(text=cleaned_text, metadata=metadata))
+    
+    documents = cleaned_documents
+    print(f"✅ Cleaned {len(documents)} documents.")
+
+    # Create node parser for chunking
+    node_parser = SentenceSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+    )
+
+    # Build the vector index
+    print("🧠 Building vector store index ...")
+    index = VectorStoreIndex.from_documents(
+        documents,
+        node_parser=node_parser,
+        show_progress=True,
+    )
+
+    # Persist to disk
+    os.makedirs(INDEX_DIR, exist_ok=True)
+    index.storage_context.persist(persist_dir=INDEX_DIR)
+    print(f"💾 Vector store index saved to: {INDEX_DIR}")
+
+    return index
+
+
+def load_index() -> VectorStoreIndex:
+    """Load an existing index from disk."""
+    Settings.embed_model = OpenAIEmbedding(model=EMBED_MODEL)
+    
+    storage_context = StorageContext.from_defaults(persist_dir=INDEX_DIR)
+    index = load_index_from_storage(storage_context)
+    return index
+
+
+def main():
+    build_vectorstore()
     print("🎉 Done! Your trading-book vector store is ready.")
 
 

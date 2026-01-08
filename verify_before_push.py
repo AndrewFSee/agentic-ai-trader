@@ -82,14 +82,24 @@ def main():
     
     # Check 6: No API keys in tracked files
     print("\n[6/8] Checking no API keys in code...")
-    success, stdout, stderr = run_git_command('git grep -i "sk-" -- "*.py"')
-    if stdout.strip() == "" or "OPENAI_API_KEY" in stdout:
+    # Check for actual API key patterns, not just "sk-" which has false positives
+    api_key_patterns = [
+        ('git grep -E "sk-[a-zA-Z0-9]{20,}" -- "*.py"', "OpenAI API key"),
+        ('git grep -E "AKIA[A-Z0-9]{16}" -- "*.py"', "AWS key"),
+        ('git grep -E "AIza[0-9A-Za-z\\-_]{35}" -- "*.py"', "Google API key"),
+    ]
+    api_key_found = False
+    for pattern, key_type in api_key_patterns:
+        success, stdout, stderr = run_git_command(pattern)
+        if stdout.strip() and "os.getenv" not in stdout and ".env" not in stdout:
+            print(f"  [ERROR] Possible {key_type} found:")
+            for line in stdout.strip().split('\n')[:3]:
+                print(f"    - {line}")
+            api_key_found = True
+            issues.append(f"Possible {key_type} in code")
+    
+    if not api_key_found:
         print("  [OK] No API keys found in Python files")
-    else:
-        print(f"  [ERROR] Possible API keys found:")
-        for line in stdout.strip().split('\n')[:5]:  # Show first 5 matches
-            print(f"    - {line}")
-        issues.append("Possible API keys in code")
     
     # Check 7: No large pickle files
     print("\n[7/8] Checking no large model files tracked...")

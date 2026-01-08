@@ -12,6 +12,11 @@ import requests
 from bs4 import BeautifulSoup
 
 # Optional ML imports for FinBERT sentiment
+_TORCH_AVAILABLE = False
+torch = None
+F = None
+AutoTokenizer = None
+AutoModelForSequenceClassification = None
 try:
     import torch
     import torch.nn.functional as F
@@ -19,12 +24,9 @@ try:
     _TORCH_AVAILABLE = True
     # Optional: quieter tokenizers
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
-except ImportError:
-    _TORCH_AVAILABLE = False
-    torch = None
-    F = None
-    AutoTokenizer = None
-    AutoModelForSequenceClassification = None
+except (ImportError, OSError):
+    # OSError can occur with DLL loading issues on Windows
+    pass
 
 
 # =============================================================================
@@ -1304,74 +1306,73 @@ def regime_consensus_check_tool_fn(state: dict, args: dict) -> dict:
     return state
 
 
-# Register regime detection tools
-register_tool({
-    "name": "regime_detection_wasserstein",
-    "description": (
-        "Detect market regime using paper-faithful Wasserstein k-means clustering. "
-        "Returns low/medium/high volatility regime with MMD quality metrics. "
-        "STRENGTHS: Best for tech/healthcare stocks with distinct volatility regimes, "
-        "excels when adaptive switching is important (e.g., MSFT +23% Sharpe vs HMM, JNJ turned -0.01 to +0.24). "
-        "WEAKNESSES: Poor cluster separation (MMD ~1.0), can get stuck in one regime, "
-        "performs worse when label consistency is too high."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "symbol": {"type": "string"},
-            "n_regimes": {"type": "integer", "default": 3},
-            "window_size": {"type": "integer", "default": 20},
-            "training_window": {"type": "integer", "default": 500}
-        },
-        "required": ["symbol"]
-    },
-    "fn": regime_detection_wasserstein_tool_fn
-})
+# =============================================================================
+# DEPRECATED REGIME DETECTION TOOLS
+# =============================================================================
+# These tools have been deprecated as they do not provide reliable alpha.
+# Use vix_roc_risk and vol_prediction instead for market timing and position sizing.
 
-register_tool({
-    "name": "regime_detection_hmm",
-    "description": (
-        "Detect market regime using Rolling HMM with forward filter (no look-ahead bias). "
-        "Returns bearish/sideways/bullish regime with probability distribution and transition probabilities. "
-        "STRENGTHS: Better for smooth transitions, provides probabilistic confidence, "
-        "more stable predictions (won on AAPL, competitive on others), works well with persistent regimes. "
-        "WEAKNESSES: Can be too stable/slow to adapt, loses to Wasserstein on volatile stocks "
-        "(MSFT -23% Sharpe, JNJ -25 basis points), less effective when rapid regime changes occur."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "symbol": {"type": "string"},
-            "n_regimes": {"type": "integer", "default": 3},
-            "training_window": {"type": "integer", "default": 500}
-        },
-        "required": ["symbol"]
-    },
-    "fn": regime_detection_hmm_tool_fn
-})
+# DEPRECATED: register_tool({
+#     "name": "regime_detection_wasserstein",
+#     "description": (
+#         "Detect market regime using paper-faithful Wasserstein k-means clustering. "
+#         "Returns low/medium/high volatility regime with MMD quality metrics. "
+#         "DEPRECATED: Use vol_prediction instead for volatility regime detection."
+#     ),
+#     "parameters": {
+#         "type": "object",
+#         "properties": {
+#             "symbol": {"type": "string"},
+#             "n_regimes": {"type": "integer", "default": 3},
+#             "window_size": {"type": "integer", "default": 20},
+#             "training_window": {"type": "integer", "default": 500}
+#         },
+#         "required": ["symbol"]
+#     },
+#     "fn": regime_detection_wasserstein_tool_fn
+# })
 
-register_tool({
-    "name": "regime_consensus_check",
-    "description": (
-        "Check if Wasserstein and HMM regime detectors agree. Must be called AFTER both regime tools. "
-        "Agreement = high confidence regime classification. Disagreement = potential transition or uncertainty. "
-        "Use when regime confidence is critical for the trading decision."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "symbol": {"type": "string"}
-        },
-        "required": ["symbol"]
-    },
-    "fn": regime_consensus_check_tool_fn
-})
+# DEPRECATED: register_tool({
+#     "name": "regime_detection_hmm",
+#     "description": (
+#         "Detect market regime using Rolling HMM with forward filter. "
+#         "DEPRECATED: Use vix_roc_risk instead for market timing."
+#     ),
+#     "parameters": {
+#         "type": "object",
+#         "properties": {
+#             "symbol": {"type": "string"},
+#             "n_regimes": {"type": "integer", "default": 3},
+#             "training_window": {"type": "integer", "default": 500}
+#         },
+#         "required": ["symbol"]
+#     },
+#     "fn": regime_detection_hmm_tool_fn
+# })
+
+# DEPRECATED: register_tool({
+#     "name": "regime_consensus_check",
+#     "description": (
+#         "Check if Wasserstein and HMM regime detectors agree. "
+#         "DEPRECATED: No longer needed as both regime tools are deprecated."
+#     ),
+#     "parameters": {
+#         "type": "object",
+#         "properties": {
+#             "symbol": {"type": "string"}
+#         },
+#         "required": ["symbol"]
+#     },
+#     "fn": regime_consensus_check_tool_fn
+# })
 
 # =============================================================================
-# ML Prediction Tool (Multi-Model with Performance Context)
+# DEPRECATED ML Prediction Tool
 # =============================================================================
+# ML prediction has been deprecated - does not provide reliable alpha.
+# Use vix_roc_risk and vol_prediction for risk management instead.
 
-# Import the ML prediction function
+# Import the ML prediction function (kept for backward compatibility)
 try:
     from ml_prediction_tool import ml_prediction_tool_fn
     _ML_TOOL_AVAILABLE = True
@@ -1388,19 +1389,74 @@ except ImportError:
         }
         return state
 
-if _ML_TOOL_AVAILABLE:
+# DEPRECATED: ML prediction tool registration
+# if _ML_TOOL_AVAILABLE:
+#     register_tool({
+#         "name": "ml_prediction",
+#         "description": (
+#             "DEPRECATED: Get ML model predictions for stock direction. "
+#             "Use vix_roc_risk and vol_prediction instead for more reliable signals."
+#         ),
+#         "parameters": {
+#             "type": "object",
+#             "properties": {
+#                 "symbol": {
+#                     "type": "string",
+#                     "description": "Stock ticker symbol (e.g., AAPL, TSLA)"
+#                 },
+#                 "horizon": {
+#                     "type": "integer",
+#                     "description": "Prediction horizon in days (3, 5, or 10). Default: 5",
+#                     "enum": [3, 5, 10]
+#                 },
+#                 "models": {
+#                     "type": "array",
+#                     "items": {"type": "string"},
+#                     "description": "Optional: Specific models to use. Default: all 4 models"
+#                 }
+#             },
+#             "required": ["symbol"]
+#         },
+#         "fn": ml_prediction_tool_fn
+#     })
+# =============================================================================
+# Volatility Prediction Tool (Early Warning System)
+# =============================================================================
+
+# Import the vol prediction function
+try:
+    from vol_prediction_tool import vol_prediction_tool_fn
+    _VOL_PREDICTION_AVAILABLE = True
+except ImportError:
+    _VOL_PREDICTION_AVAILABLE = False
+    
+    def vol_prediction_tool_fn(state: dict, args: dict) -> dict:
+        if "tool_results" not in state:
+            state["tool_results"] = {}
+        state["tool_results"]["vol_prediction"] = {
+            "error": "Vol prediction tool not available (import failed)",
+            "symbol": args.get("symbol")
+        }
+        return state
+
+if _VOL_PREDICTION_AVAILABLE:
     register_tool({
-        "name": "ml_prediction",
+        "name": "vol_prediction",
         "description": (
-            "Get ML model predictions for stock direction with comprehensive performance context. "
-            "Returns predictions from 4 trained models (Random Forest, XGBoost, Logistic Regression, Decision Tree) "
-            "trained on 141 optimized features across 25 stocks with +26% improvement vs baseline. "
-            "\n\nModel Strengths by Horizon:"
-            "\n• 3-day: Random Forest (Sharpe 1.52) - best for short-term"
-            "\n• 5-day: XGBoost (Sharpe 1.34) - best for medium-term"  
-            "\n• 10-day: XGBoost (Sharpe 1.45) - best for long-term"
-            "\n\nProvides: Individual predictions, consensus, probabilities, and historical performance metrics. "
-            "Use this to get data-driven directional forecasts with confidence levels and model agreement."
+            "Predict volatility regime transitions for position sizing and risk management. "
+            "Uses VIX-based universal features (work across all equities) plus asset-specific volatility. "
+            "\n\nReturns:"
+            "\n• current_regime: 'LOW' or 'HIGH' volatility"
+            "\n• spike_probability: P(transitioning to HIGH) if currently LOW (vol spike warning)"
+            "\n• calm_probability: P(transitioning to LOW) if currently HIGH (vol calming signal)"
+            "\n• risk_level: 'LOW', 'WATCH', 'ELEVATED', 'CALMING', 'HIGH'"
+            "\n• suggested_action: Position sizing recommendation"
+            "\n• vix_zscore: Current VIX relative to 60-day history"
+            "\n\nPrecision:"
+            "\n• Spike predictions (0.6+ threshold): ~62% precision vs 23% base rate"
+            "\n• Calm predictions (0.6+ threshold): ~62% precision vs 42% base rate"
+            "\n\nUse this for position sizing, not directional timing. "
+            "Low spike probability = normal sizing. High spike probability = reduce exposure."
         ),
         "parameters": {
             "type": "object",
@@ -1408,19 +1464,245 @@ if _ML_TOOL_AVAILABLE:
                 "symbol": {
                     "type": "string",
                     "description": "Stock ticker symbol (e.g., AAPL, TSLA)"
-                },
-                "horizon": {
-                    "type": "integer",
-                    "description": "Prediction horizon in days (3, 5, or 10). Default: 5",
-                    "enum": [3, 5, 10]
-                },
-                "models": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional: Specific models to use. Default: all 4 models"
                 }
             },
             "required": ["symbol"]
         },
-        "fn": ml_prediction_tool_fn
+        "fn": vol_prediction_tool_fn
+    })
+
+
+# =============================================================================
+# VIX ROC Risk Overlay Tool (Three-Tier Market Timing)
+# =============================================================================
+
+# Import the VIX ROC overlay
+try:
+    from models.vix_roc_production import VIXROCRiskOverlay, AssetTier, TIER_PARAMS
+    _VIX_ROC_AVAILABLE = True
+    _vix_roc_overlay = None  # Lazy initialization
+except ImportError:
+    _VIX_ROC_AVAILABLE = False
+
+
+def _get_vix_roc_overlay():
+    """Lazy initialization of VIX ROC overlay with current VIX data."""
+    global _vix_roc_overlay
+    
+    if _vix_roc_overlay is None:
+        try:
+            import yfinance as yf
+            import pandas as pd
+            
+            _vix_roc_overlay = VIXROCRiskOverlay()
+            
+            # Load recent VIX data (last 60 days for ROC calculation)
+            vix = yf.download("^VIX", period="3mo", progress=False)
+            if isinstance(vix.columns, pd.MultiIndex):
+                vix.columns = vix.columns.get_level_values(0)
+            
+            if not vix.empty:
+                _vix_roc_overlay.load_vix_data(vix)
+        except Exception as e:
+            print(f"Warning: Could not initialize VIX ROC overlay: {e}")
+            return None
+    
+    return _vix_roc_overlay
+
+
+def vix_roc_risk_tool_fn(state: dict, args: dict) -> dict:
+    """
+    VIX ROC-based risk overlay tool for market timing.
+    
+    Classifies asset into tier and provides current risk signal.
+    Walk-forward validated: 15/15 wins on tested assets (2020-2024).
+    """
+    if "tool_results" not in state:
+        state["tool_results"] = {}
+    
+    if not _VIX_ROC_AVAILABLE:
+        state["tool_results"]["vix_roc_risk"] = {
+            "error": "VIX ROC tool not available (import failed)",
+            "symbol": args.get("symbol")
+        }
+        return state
+    
+    symbol = args.get("symbol", "").upper()
+    if not symbol:
+        state["tool_results"]["vix_roc_risk"] = {
+            "error": "symbol is required"
+        }
+        return state
+    
+    overlay = _get_vix_roc_overlay()
+    if overlay is None:
+        state["tool_results"]["vix_roc_risk"] = {
+            "symbol": symbol,
+            "error": "Could not initialize VIX ROC overlay (check yfinance)"
+        }
+        return state
+    
+    try:
+        # Get classification
+        classification = overlay.classify_asset(symbol)
+        
+        # Get current signal
+        signal = overlay.get_current_signal(symbol)
+        
+        # Build result
+        result = {
+            "symbol": symbol,
+            "tier": classification["tier"],
+            "tier_name": classification["tier_name"],
+            "classification_source": classification["classification_source"],
+            "strategy_params": {
+                "exit_when_vix_roc_above": f"{classification['params']['exit_threshold']*100:.0f}%",
+                "reenter_when_vix_roc_below": f"{classification['params']['reentry_threshold']*100:+.0f}%",
+                "min_days_out": classification["params"]["min_exit_days"],
+                "roc_lookback_days": classification["params"]["roc_lookback"]
+            },
+            "current_signal": signal["signal"],
+            "current_vix_roc": f"{signal['vix_roc']:.1%}",
+            "position_status": "IN MARKET" if signal["position_pct"] == 1.0 else "OUT OF MARKET",
+            "message": signal["message"],
+            "tier_description": classification["description"]
+        }
+        
+        # Add sector/beta if available
+        if classification.get("sector"):
+            result["sector"] = classification["sector"]
+        if classification.get("beta"):
+            result["beta"] = classification["beta"]
+        
+        state["tool_results"]["vix_roc_risk"] = result
+        
+    except Exception as e:
+        state["tool_results"]["vix_roc_risk"] = {
+            "symbol": symbol,
+            "error": f"Error computing VIX ROC signal: {str(e)}"
+        }
+    
+    return state
+
+
+def vix_roc_portfolio_risk_fn(state: dict, args: dict) -> dict:
+    """
+    Get portfolio-wide VIX ROC risk assessment.
+    
+    Checks multiple assets and provides overall market risk level.
+    """
+    if "tool_results" not in state:
+        state["tool_results"] = {}
+    
+    if not _VIX_ROC_AVAILABLE:
+        state["tool_results"]["vix_roc_portfolio_risk"] = {
+            "error": "VIX ROC tool not available"
+        }
+        return state
+    
+    symbols = args.get("symbols", [])
+    if not symbols:
+        # Default to major indices/ETFs
+        symbols = ["SPY", "QQQ", "IWM"]
+    
+    overlay = _get_vix_roc_overlay()
+    if overlay is None:
+        state["tool_results"]["vix_roc_portfolio_risk"] = {
+            "error": "Could not initialize VIX ROC overlay"
+        }
+        return state
+    
+    try:
+        assessment = overlay.get_risk_assessment([s.upper() for s in symbols])
+        
+        # Simplify signals for output
+        simplified_signals = []
+        for sig in assessment.get("signals", []):
+            simplified_signals.append({
+                "ticker": sig["ticker"],
+                "signal": sig["signal"],
+                "tier": sig["tier"],
+                "message": sig.get("message", "")
+            })
+        
+        result = {
+            "timestamp": assessment["timestamp"],
+            "current_vix": assessment["current_vix"],
+            "risk_level": assessment["risk_level"],
+            "risk_message": assessment["risk_message"],
+            "exit_signals_active": assessment["exit_signals"],
+            "assets_out_of_market": assessment["assets_out_of_market"],
+            "total_assets_checked": assessment["total_assets"],
+            "individual_signals": simplified_signals
+        }
+        
+        state["tool_results"]["vix_roc_portfolio_risk"] = result
+        
+    except Exception as e:
+        state["tool_results"]["vix_roc_portfolio_risk"] = {
+            "error": f"Error computing portfolio risk: {str(e)}"
+        }
+    
+    return state
+
+
+if _VIX_ROC_AVAILABLE:
+    register_tool({
+        "name": "vix_roc_risk",
+        "description": (
+            "VIX Rate-of-Change based risk overlay - the PRIMARY market timing tool. "
+            "Walk-forward validated with 15/15 wins on tested assets (2020-2024). "
+            "\n\nAutomatically classifies assets into three tiers based on recovery characteristics:"
+            "\n• TIER 1 (Value/Cyclical): SPY, DIA, IWM, XLF, XLE - conservative, waits for VIX calm"
+            "\n• TIER 2 (Growth/Tech ETFs): QQQ, AAPL, AMZN, GOOGL - aggressive, quick re-entry"
+            "\n• TIER 3 (Mega-Cap Tech): NVDA, MSFT, META - ultra-conservative, only extreme events"
+            "\n\nReturns:"
+            "\n• tier: Asset classification and optimized parameters"
+            "\n• current_signal: 'exit' | 'reenter' | 'hold'"
+            "\n• position_status: Whether currently in or out of market"
+            "\n• strategy_params: Tier-specific thresholds"
+            "\n\nPerformance (2020-2024 out-of-sample):"
+            "\n• Tier 1: +39% avg excess return, 7/7 wins"
+            "\n• Tier 2: +20% avg excess return, 5/5 wins"
+            "\n• Tier 3: +140% avg excess return, 3/3 wins"
+            "\n\nUSE THIS before entering any position to check market risk."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "Stock/ETF ticker symbol (e.g., SPY, NVDA, QQQ)"
+                }
+            },
+            "required": ["symbol"]
+        },
+        "fn": vix_roc_risk_tool_fn
+    })
+    
+    register_tool({
+        "name": "vix_roc_portfolio_risk",
+        "description": (
+            "Get portfolio-wide VIX ROC risk assessment across multiple assets. "
+            "Provides overall market risk level and per-asset signals. "
+            "\n\nReturns:"
+            "\n• risk_level: 'LOW' | 'MODERATE' | 'ELEVATED' | 'HIGH'"
+            "\n• current_vix: Current VIX level"
+            "\n• exit_signals_active: Number of assets with active exit signals"
+            "\n• assets_out_of_market: Number of assets currently out"
+            "\n• individual_signals: Per-asset breakdown"
+            "\n\nUse for overall market risk assessment before making portfolio decisions."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "symbols": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of tickers to check. Default: SPY, QQQ, IWM"
+                }
+            },
+            "required": []
+        },
+        "fn": vix_roc_portfolio_risk_fn
     })
