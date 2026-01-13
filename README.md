@@ -48,6 +48,45 @@ Implements the 4-step Reflexion pattern (Shinn et al., 2023):
 3. **REFLECT**: Extract learnings from the critique
 4. **REFINE**: Generate improved final decision
 
+### Trade Reflection Memory System 🧠
+
+Cross-episode learning from past trades:
+
+**How It Works**:
+```
+Trades Close → trade_log.jsonl → build_trade_memory.py → db/trades/
+                                                       ↓
+                              reflect_on_trades.py → db/trade_lessons/
+                                                       ↓
+                         Reflexion Agent queries both before decisions
+```
+
+**Components**:
+- **Trade Logging**: Every closed position is logged with full context (VIX ROC tier, vol regime, agent rationale)
+- **Trade Memory Index**: LlamaIndex vector store of past trades for similarity search
+- **Trade Lessons**: LLM-extracted insights grouped by symbol + tier + regime
+- **Agent Integration**: Lessons are retrieved and included in decision prompts
+
+**Lesson Verdicts**:
+| Verdict | Meaning | Win Rate |
+|---------|---------|----------|
+| `lean_in` | Strong edge, increase size | > 60% |
+| `ok` | Acceptable, normal sizing | 50-60% |
+| `size_down` | High variance, reduce size | 40-50% |
+| `avoid` | Negative expectancy | < 40% |
+
+**Usage**:
+```bash
+# After accumulating trades, build memory index
+python scripts/build_trade_memory.py
+
+# Generate lessons from trade cohorts
+python scripts/reflect_on_trades.py --min-samples 5
+
+# Agent automatically queries trade memory before decisions
+python analyze_trade_agent_reflexion.py
+```
+
 ## Architecture
 
 ```
@@ -66,6 +105,8 @@ User Query → RAG Search (trading books) → Planner (tool selection)
 | **VIX ROC Strategy** | `models/vix_roc_production.py` | Production risk overlay |
 | **Vol Prediction** | `vol_prediction_tool.py` | Volatility regime prediction |
 | **Paper Trading** | `live_testing/paper_trader_new.py` | Forward testing system |
+| **Trade Memory** | `scripts/build_trade_memory.py` | Build trade memory index |
+| **Trade Lessons** | `scripts/reflect_on_trades.py` | Extract LLM lessons from trades |
 
 ## Quick Start
 
@@ -192,11 +233,19 @@ agentic_ai_trader/
 │   ├── vix_roc_production.py          # VIX ROC strategy (~950 lines)
 │   ├── rolling_hmm_regime_detection.py # HMM regime (archived)
 │   └── paper_wasserstein_regime_detection.py # Wasserstein (archived)
+├── scripts/
+│   ├── build_trade_memory.py          # Build trade memory index
+│   └── reflect_on_trades.py           # Extract LLM lessons
 ├── live_testing/
 │   ├── paper_trader_new.py            # Forward paper trading
 │   ├── strategies_new.py              # Strategy implementations
+│   ├── trade_logging.py               # Trade record logging
 │   ├── config_new.py                  # Configuration
 │   └── portfolio_tracker.py           # Portfolio management
+├── db/
+│   ├── books/                         # Trading book embeddings
+│   ├── trades/                        # Trade memory index
+│   └── trade_lessons/                 # LLM-extracted lessons
 ├── docs/
 │   ├── VIX_ROC_STRATEGY.md            # Strategy documentation
 │   ├── RESEARCH_FEATURE.md            # Research capabilities
@@ -274,4 +323,4 @@ Contributions welcome! Please:
 
 ## Author
 
-Agentic AI Trader - January 2026
+Andrew See - January 2026

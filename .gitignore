@@ -146,6 +146,12 @@ coverage.xml
 db/books/*
 !db/books/.gitkeep
 
+# Trade memory indexes (user-specific)
+db/trades/*
+!db/trades/.gitkeep
+db/trade_lessons/*
+!db/trade_lessons/.gitkeep
+
 # Keep empty db directories
 !db/.gitkeep
 

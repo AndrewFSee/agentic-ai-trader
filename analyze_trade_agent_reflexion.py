@@ -34,6 +34,11 @@ from llama_index.embeddings.openai import OpenAIEmbedding
 from agent_tools import run_tools
 from planner import plan_tools  # Use streamlined planner
 
+# Trade memory imports
+from pathlib import Path
+TRADE_MEMORY_DIR = Path(__file__).parent / "db" / "trades"
+TRADE_LESSONS_DIR = Path(__file__).parent / "db" / "trade_lessons"
+
 # LlamaIndex config - use absolute path for directory independence
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 INDEX_DIR = os.path.join(_SCRIPT_DIR, "db", "books")
@@ -86,6 +91,146 @@ def load_vectorstore() -> Any:
             return []
 
         return SimpleNamespace(similarity_search=_empty_search)
+
+
+# =============================================================================
+# TRADE MEMORY INTEGRATION
+# =============================================================================
+
+def load_trade_memory() -> Optional[Any]:
+    """
+    Load the trade memory index (past trades) from disk.
+    
+    Returns None if the index doesn't exist yet.
+    """
+    from types import SimpleNamespace
+    
+    if not TRADE_MEMORY_DIR.exists():
+        logger.info("Trade memory not found at %s - skipping", TRADE_MEMORY_DIR)
+        return None
+    
+    try:
+        Settings.embed_model = OpenAIEmbedding(model=EMBED_MODEL)
+        storage_context = StorageContext.from_defaults(persist_dir=str(TRADE_MEMORY_DIR))
+        index = load_index_from_storage(storage_context)
+        logger.info("Loaded trade memory from %s", TRADE_MEMORY_DIR)
+        return RAGIndex(index)
+    except Exception as e:
+        logger.warning("Could not load trade memory: %s", e)
+        return None
+
+
+def load_trade_lessons() -> Optional[Any]:
+    """
+    Load the trade lessons index (LLM-extracted insights) from disk.
+    
+    Returns None if the index doesn't exist yet.
+    """
+    from types import SimpleNamespace
+    
+    if not TRADE_LESSONS_DIR.exists():
+        logger.info("Trade lessons not found at %s - skipping", TRADE_LESSONS_DIR)
+        return None
+    
+    try:
+        Settings.embed_model = OpenAIEmbedding(model=EMBED_MODEL)
+        storage_context = StorageContext.from_defaults(persist_dir=str(TRADE_LESSONS_DIR))
+        index = load_index_from_storage(storage_context)
+        logger.info("Loaded trade lessons from %s", TRADE_LESSONS_DIR)
+        return RAGIndex(index)
+    except Exception as e:
+        logger.warning("Could not load trade lessons: %s", e)
+        return None
+
+
+def query_trade_memory(
+    symbol: str,
+    trading_idea: str,
+    vix_roc_tier: Optional[str] = None,
+    vol_regime: Optional[str] = None,
+    k: int = 3,
+) -> Tuple[List, List]:
+    """
+    Query trade memory and lessons for relevant past experiences.
+    
+    Args:
+        symbol: The ticker symbol
+        trading_idea: The current trading idea
+        vix_roc_tier: Current VIX ROC tier (e.g., "tier2_growth")
+        vol_regime: Current volatility regime (e.g., "LOW", "HIGH")
+        k: Number of results to retrieve from each index
+        
+    Returns:
+        Tuple of (past_trades, lessons) where each is a list of docs
+    """
+    past_trades = []
+    lessons = []
+    
+    # Build query incorporating current context
+    query_parts = [symbol, trading_idea]
+    if vix_roc_tier:
+        query_parts.append(f"vix_roc_tier {vix_roc_tier}")
+    if vol_regime:
+        query_parts.append(f"vol_regime {vol_regime}")
+    
+    query = " ".join(query_parts)
+    
+    # Query trade memory
+    trade_memory = load_trade_memory()
+    if trade_memory:
+        try:
+            past_trades = trade_memory.similarity_search(query, k=k)
+            logger.info("Found %d relevant past trades", len(past_trades))
+        except Exception as e:
+            logger.warning("Trade memory query failed: %s", e)
+    
+    # Query lessons
+    lessons_index = load_trade_lessons()
+    if lessons_index:
+        try:
+            lessons = lessons_index.similarity_search(query, k=k)
+            logger.info("Found %d relevant lessons", len(lessons))
+        except Exception as e:
+            logger.warning("Lessons query failed: %s", e)
+    
+    return past_trades, lessons
+
+
+def _format_trade_memory_context(
+    past_trades: List,
+    lessons: List,
+) -> str:
+    """
+    Format trade memory and lessons for inclusion in prompts.
+    """
+    sections = []
+    
+    if lessons:
+        sections.append("=== RELEVANT PAST TRADE LESSONS ===\n")
+        for i, doc in enumerate(lessons, 1):
+            verdict = doc.metadata.get("verdict", "unknown")
+            confidence = doc.metadata.get("confidence", 0)
+            sections.append(f"--- Lesson {i} (Verdict: {verdict.upper()}, Confidence: {confidence:.0%}) ---")
+            sections.append(doc.page_content.strip())
+            sections.append("")
+    
+    if past_trades:
+        sections.append("=== RELEVANT PAST TRADES ===\n")
+        for i, doc in enumerate(past_trades, 1):
+            outcome = "WIN" if doc.metadata.get("is_winner") else "LOSS"
+            pnl_pct = doc.metadata.get("pnl_pct", 0)
+            sections.append(f"--- Past Trade {i} ({outcome}, {pnl_pct:+.2f}%) ---")
+            # Truncate long trade records
+            content = doc.page_content.strip()
+            if len(content) > 500:
+                content = content[:500] + "..."
+            sections.append(content)
+            sections.append("")
+    
+    if not sections:
+        return ""
+    
+    return "\n".join(sections)
 
 
 def _format_docs(docs: List) -> str:
@@ -302,9 +447,12 @@ def _generate_initial_analysis(
     tool_results: Dict[str, Any],
     book_context: str,
     rules_context: str,
+    trade_memory_context: str = "",
 ) -> str:
     """
     STEP 1: Generate initial analysis and decision.
+    
+    Now includes trade memory context (past trades and lessons) when available.
     """
     # Format tool results
     price_text = _format_price_summary(tool_results.get("polygon_price_data"))
@@ -313,16 +461,33 @@ def _generate_initial_analysis(
     tech_text = _format_technical_summary(tool_results)
     news_text = _format_news_summary(tool_results.get("news_sentiment_finviz_finbert"))
     
+    # Build system prompt - enhanced with trade memory instructions
     system_prompt = """You are an expert trading analyst. Your task is to analyze a trade idea 
-using the provided market data and trading book knowledge.
+using the provided market data, trading book knowledge, and lessons from past trades.
 
 Focus on:
 1. VIX ROC Risk Signal - the PRIMARY market timing indicator
 2. Volatility Prediction - for position sizing
 3. Technical Analysis - trend, momentum, overbought/oversold
 4. News Sentiment - recent catalysts
+5. PAST TRADE LESSONS - Learn from previous similar trades
 
-Be direct and specific. Cite the trading books when making recommendations.
+IMPORTANT: If trade lessons are provided, you MUST:
+- Explicitly consider each relevant lesson
+- State whether you are FOLLOWING or OVERRIDING each lesson
+- Justify any overrides with specific reasoning
+
+Be direct and specific. Cite the trading books and lessons when making recommendations.
+"""
+
+    # Build trade memory section
+    trade_memory_section = ""
+    if trade_memory_context:
+        trade_memory_section = f"""
+PAST TRADE MEMORY
+=================
+{trade_memory_context}
+
 """
 
     user_prompt = f"""
@@ -330,7 +495,7 @@ TRADING IDEA
 ============
 Symbol: {symbol}
 Idea: {trading_idea}
-
+{trade_memory_section}
 VIX ROC RISK OVERLAY
 ====================
 {vix_roc_text}
@@ -382,12 +547,17 @@ Provide your initial analysis covering:
    - What is the recent news sentiment?
    - Any notable catalysts?
 
-5. INITIAL VERDICT:
+5. TRADE LESSONS (if provided):
+   - Review each relevant lesson from past trades
+   - For each lesson, state: FOLLOWING or OVERRIDING
+   - If overriding, explain why current conditions are different
+
+6. INITIAL VERDICT:
    - VERDICT: ATTRACTIVE, NOT ATTRACTIVE, or UNCLEAR
    - Key reasons for your verdict
    - Suggested entry, stop, and target if attractive
 
-Be specific and cite book wisdom where relevant.
+Be specific and cite book wisdom and trade lessons where relevant.
 """
 
     return _call_llm(system_prompt, user_prompt)
@@ -669,6 +839,25 @@ def analyze_trade_reflexion(
     if verbose:
         print(f"[TOOLS] Results: {', '.join(tool_results.keys())}")
 
+    # 4) Query trade memory for relevant past trades and lessons
+    vix_roc_result = tool_results.get("vix_roc_risk", {})
+    vol_result = tool_results.get("vol_prediction", {})
+    
+    past_trades, lessons = query_trade_memory(
+        symbol=symbol,
+        trading_idea=trading_idea,
+        vix_roc_tier=vix_roc_result.get("tier_name"),
+        vol_regime=vol_result.get("current_regime"),
+        k=3,
+    )
+    
+    trade_memory_context = _format_trade_memory_context(past_trades, lessons)
+    
+    if verbose and trade_memory_context:
+        num_trades = len(past_trades)
+        num_lessons = len(lessons)
+        print(f"[TRADE MEMORY] Found {num_trades} past trades, {num_lessons} lessons")
+
     # =========================================================================
     # REFLEXION LOOP
     # =========================================================================
@@ -684,6 +873,7 @@ def analyze_trade_reflexion(
         tool_results=tool_results,
         book_context=idea_context,
         rules_context=rules_context,
+        trade_memory_context=trade_memory_context,
     )
     
     if verbose:
