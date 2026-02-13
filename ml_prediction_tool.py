@@ -7,32 +7,34 @@ import os
 import sys
 import json
 import joblib
+import importlib
+import importlib.util
 from pathlib import Path
 from typing import Dict, List, Any
 
-# Add ml_models to path - MUST be first to avoid config.py conflicts
+# Resolve ml_models directory
 try:
     ml_models_path = Path(__file__).parent / "ml_models"
 except NameError:
-    # If __file__ not defined (e.g., running in REPL), use cwd
     ml_models_path = Path.cwd() / "ml_models"
 
-# CRITICAL: Remove live_testing from path and ensure ml_models is FIRST
-# This prevents importing live_testing/config.py instead of ml_models/config.py
-original_path = sys.path.copy()
-sys.path = [str(ml_models_path)] + [p for p in sys.path if 'live_testing' not in p.lower()]
 
-# Also clear any cached imports of config module that might be wrong
-if 'config' in sys.modules:
-    # Check if it's the wrong config (from live_testing)
-    if hasattr(sys.modules['config'], '__file__'):
-        config_file = sys.modules['config'].__file__
-        if config_file and 'live_testing' in config_file:
-            del sys.modules['config']
+def _import_from_ml_models(module_name: str):
+    """Import a module from ml_models/ by absolute file path, avoiding config.py collisions."""
+    module_file = ml_models_path / f"{module_name}.py"
+    if not module_file.exists():
+        raise ImportError(f"{module_file} not found")
+    spec = importlib.util.spec_from_file_location(module_name, str(module_file))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 
 try:
-    from feature_engineering import engineer_features
-    from data_collection import fetch_daily_bars
+    _fe_mod = _import_from_ml_models("feature_engineering")
+    engineer_features = _fe_mod.engineer_features
+    _dc_mod = _import_from_ml_models("data_collection")
+    fetch_daily_bars = _dc_mod.fetch_daily_bars
     import pandas as pd
     import numpy as np
     import datetime as dt
@@ -246,13 +248,6 @@ def get_ml_prediction(symbol: str, horizon: int, models: List[str] = None) -> Di
         
         # Engineer features with timeout (GDELT can hang)
         import signal
-        import sys
-        import os
-        
-        # Add ml_models to path (use different variable to avoid overwriting global)
-        ml_models_path_str = os.path.join(os.path.dirname(__file__), 'ml_models')
-        if ml_models_path_str not in sys.path:
-            sys.path.insert(0, ml_models_path_str)
         
         def timeout_handler(signum, frame):
             raise TimeoutError("Feature engineering timed out")

@@ -31,15 +31,10 @@ except (ImportError, OSError) as e:
         _TORCH_WARNING_SHOWN = True
 
 # =============================================================================
-# Generic Tool Registry
+# Tool Registry (uses unified ToolSpec)
 # =============================================================================
 
-class ToolSpec(TypedDict):
-    name: str
-    description: str
-    parameters: dict  # OpenAI function calling schema
-    fn: Callable[[dict, dict], dict]
-
+from tool_registry import ToolSpec
 
 TOOL_REGISTRY: Dict[str, ToolSpec] = {}
 

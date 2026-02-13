@@ -56,7 +56,9 @@ else:
     logger.info("GPT-Researcher PRODUCTION MODE: %s iterations, %s results/query, %s words",
                 MAX_ITERATIONS, MAX_SEARCH_RESULTS_PER_QUERY, TOTAL_WORDS)
 
-# Tool registry
+# Tool registry (uses unified ToolSpec)
+from tool_registry import ToolSpec
+
 TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 
 

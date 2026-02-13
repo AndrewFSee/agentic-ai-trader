@@ -97,16 +97,26 @@ def load_vectorstore() -> Any:
 # TRADE MEMORY INTEGRATION
 # =============================================================================
 
+# Track if we've already warned about missing indexes (to avoid spam)
+_warned_no_trade_memory = False
+_warned_no_trade_lessons = False
+
+
 def load_trade_memory() -> Optional[Any]:
     """
     Load the trade memory index (past trades) from disk.
     
     Returns None if the index doesn't exist yet.
     """
+    global _warned_no_trade_memory
     from types import SimpleNamespace
     
-    if not TRADE_MEMORY_DIR.exists():
-        logger.info("Trade memory not found at %s - skipping", TRADE_MEMORY_DIR)
+    # Check if index files actually exist (not just directory with .gitkeep)
+    docstore_path = TRADE_MEMORY_DIR / "docstore.json"
+    if not docstore_path.exists():
+        if not _warned_no_trade_memory:
+            logger.debug("Trade memory index not built yet - run scripts/build_trade_memory.py after closing trades")
+            _warned_no_trade_memory = True
         return None
     
     try:
@@ -126,10 +136,15 @@ def load_trade_lessons() -> Optional[Any]:
     
     Returns None if the index doesn't exist yet.
     """
+    global _warned_no_trade_lessons
     from types import SimpleNamespace
     
-    if not TRADE_LESSONS_DIR.exists():
-        logger.info("Trade lessons not found at %s - skipping", TRADE_LESSONS_DIR)
+    # Check if index files actually exist (not just directory with .gitkeep)
+    docstore_path = TRADE_LESSONS_DIR / "docstore.json"
+    if not docstore_path.exists():
+        if not _warned_no_trade_lessons:
+            logger.debug("Trade lessons index not built yet - run scripts/reflect_on_trades.py after accumulating trades")
+            _warned_no_trade_lessons = True
         return None
     
     try:

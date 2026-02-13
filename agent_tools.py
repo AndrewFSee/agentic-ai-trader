@@ -54,9 +54,11 @@ class RateLimiter:
 
 
 # Global rate limiter for Polygon.io
-# Set to 1000 calls/min for paid tier to avoid unnecessary delays
-# (Actual limits are higher: 1000/min on Advanced, 10k+/min on higher tiers)
-_polygon_limiter = RateLimiter(calls_per_minute=1000)
+# Paid tier (Advanced/higher): effectively no practical limit at 1000/min
+# Free tier: set to 5 calls/min via POLYGON_RATE_LIMIT env var
+import os as _os
+_polygon_rate_limit = int(_os.getenv("POLYGON_RATE_LIMIT", "1000"))
+_polygon_limiter = RateLimiter(calls_per_minute=_polygon_rate_limit)
 
 
 def run_tools(
@@ -67,8 +69,8 @@ def run_tools(
 
     Updates and returns the state dict.
     
-    Uses smart rate limiting that only delays when necessary to respect
-    the Polygon.io Massive tier limit of 5 calls per minute (100k calls/month).
+    Uses smart rate limiting configured via POLYGON_RATE_LIMIT env var
+    (default 1000/min for paid tier, set to 5 for free tier).
     """
     if "tool_results" not in state:
         state["tool_results"] = {}

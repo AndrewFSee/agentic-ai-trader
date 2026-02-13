@@ -42,6 +42,9 @@ load_dotenv()
 # Suppress warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+# Use unified tool registry
+from tool_registry import ToolSpec, ToolRegistry
+
 # ==================== CONFIGURATION ====================
 
 POLYGON_API_KEY = os.environ.get("POLYGON_API_KEY")
@@ -49,46 +52,39 @@ POLYGON_BASE_URL = "https://api.polygon.io"
 
 # ==================== REGISTRY ====================
 
-# Global tool registry
-_tool_registry: List[Dict] = []
-
-
-class ToolSpec(TypedDict):
-    name: str
-    description: str
-    parameters: Dict
-    fn: callable
+# Use unified ToolRegistry with O(1) lookup
+_registry = ToolRegistry()
 
 
 def register_tool(spec: ToolSpec):
     """Register a tool in the global registry."""
-    _tool_registry.append(spec)
+    _registry.register(spec)
 
 
 def get_all_tools() -> List[Dict]:
     """Get all registered tools (without the fn field for JSON serialization)."""
-    return [{k: v for k, v in tool.items() if k != 'fn'} for tool in _tool_registry]
+    return _registry.get_all_specs()
 
 
 def get_tool_function(tool_name: str) -> Optional[callable]:
     """Get the function associated with a tool name."""
-    for tool in _tool_registry:
-        if tool['name'] == tool_name:
-            return tool['fn']
-    return None
+    return _registry.get_function(tool_name)
 
 
 # ==================== HELPER FUNCTIONS ====================
 
-def _check_api_key():
-    """Check if Polygon API key is configured."""
+def _check_api_key() -> Optional[dict]:
+    """Check if Polygon API key is configured. Returns error dict if missing, None if OK."""
     if not POLYGON_API_KEY:
-        raise ValueError("POLYGON_API_KEY environment variable not set. Get one at https://polygon.io")
+        return {"error": "POLYGON_API_KEY environment variable not set. Get one at https://polygon.io"}
+    return None
 
 
-def _polygon_request(endpoint: str, params: dict = None) -> dict:
-    """Make a request to Polygon.io API with error handling."""
-    _check_api_key()
+def _polygon_request(endpoint: str, params: dict = None, max_retries: int = 3) -> dict:
+    """Make a request to Polygon.io API with error handling and retry logic."""
+    key_error = _check_api_key()
+    if key_error:
+        return key_error
     
     if params is None:
         params = {}
@@ -96,22 +92,35 @@ def _polygon_request(endpoint: str, params: dict = None) -> dict:
     params['apiKey'] = POLYGON_API_KEY
     url = f"{POLYGON_BASE_URL}{endpoint}"
     
-    try:
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        
-        # Check for API-level errors
-        if data.get('status') == 'ERROR':
-            error_msg = data.get('error', 'Unknown API error')
-            return {"error": error_msg}
-        
-        return data
-        
-    except requests.exceptions.RequestException as e:
-        return {"error": f"Request failed: {str(e)}"}
-    except ValueError as e:
-        return {"error": f"JSON parsing failed: {str(e)}"}
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Check for API-level errors
+            if data.get('status') == 'ERROR':
+                error_msg = data.get('error', 'Unknown API error')
+                return {"error": error_msg}
+            
+            return data
+            
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                wait = 2.0 * (2 ** attempt)
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Polygon API retry %d/%d for %s: %s (waiting %.0fs)",
+                    attempt + 1, max_retries, endpoint, e, wait
+                )
+                import time
+                time.sleep(wait)
+        except ValueError as e:
+            return {"error": f"JSON parsing failed: {str(e)}"}
+    
+    return {"error": f"Request failed after {max_retries} retries: {str(last_error)}"}
 
 
 def _calculate_atr(bars: List[Dict], window: int = 14) -> Dict:
