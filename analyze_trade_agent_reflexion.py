@@ -33,6 +33,7 @@ from llama_index.embeddings.openai import OpenAIEmbedding
 
 from agent_tools import run_tools
 from planner import plan_tools  # Use streamlined planner
+from trading_decision_schema import TRADING_DECISION_SCHEMA, parse_structured_decision
 
 # Trade memory imports
 from pathlib import Path
@@ -452,6 +453,40 @@ def _call_llm(system: str, user: str, model: str = DECISION_MODEL) -> str:
         raise
 
 
+def _call_llm_structured(
+    system: str, user: str, json_schema: Dict[str, Any], model: str = DECISION_MODEL
+) -> Dict[str, Any]:
+    """Call OpenAI with structured output (JSON schema) and return parsed dict."""
+    import json as _json
+
+    client = OpenAIClient()
+    timeout_sec = int(os.getenv("LLM_CALL_TIMEOUT_SEC", "120"))
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(
+                lambda: client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": json_schema,
+                    },
+                    timeout=timeout_sec,
+                )
+            )
+            response = fut.result(timeout=timeout_sec + 10)
+
+        raw = response.choices[0].message.content
+        return _json.loads(raw)
+    except Exception as e:
+        logger.exception("Structured LLM call failed: %s", e)
+        raise
+
+
 # =============================================================================
 # REFLEXION AGENT IMPLEMENTATION
 # =============================================================================
@@ -703,9 +738,13 @@ def _generate_refined_decision(
     critique: str,
     reflection: str,
     tool_results: Dict[str, Any],
-) -> str:
+) -> Dict[str, Any]:
     """
-    STEP 4: Generate the final refined decision incorporating all insights.
+    STEP 4: Generate the final refined decision as STRUCTURED JSON.
+    
+    Uses OpenAI's response_format with a strict JSON schema to guarantee
+    a parseable verdict, confidence score, entry/stop/target, and risk fields.
+    Returns a dict (not free text) that can be consumed directly.
     """
     vix_roc_result = tool_results.get("vix_roc_risk", {})
     vol_pred_result = tool_results.get("vol_prediction", {})
@@ -724,6 +763,27 @@ Your job is to synthesize everything into a FINAL, REFINED recommendation that:
 - Provides actionable, specific guidance
 
 NEVER IGNORE the VIX ROC signal - it is the PRIMARY market timing indicator.
+If the VIX ROC signal is 'exit', the verdict MUST be NOT_ATTRACTIVE regardless of technicals.
+
+CONFIDENCE SCORING (1-10):
+- 1-3: Weak thesis, significant headwinds, unfavorable timing
+- 4-5: Mixed signals, unclear edge
+- 6-7: Solid thesis with manageable risks
+- 8-10: Strong conviction with aligned signals (reserve 9-10 for exceptional setups)
+
+POSITION SIZING GUIDE:
+- Confidence 1-3 → recommended_pct: 0 (do not trade)
+- Confidence 4-5 → recommended_pct: 5-8%
+- Confidence 6-7 → recommended_pct: 10-15%
+- Confidence 8-10 → recommended_pct: 15-20%
+- High vol regime → reduce by 30-50%
+- VIX ROC exit → recommended_pct: 0
+
+STOP LOSS RULES:
+- ALWAYS set a stop loss if verdict is ATTRACTIVE
+- Use ATR-based stops: 1.5-2x ATR below entry for longs
+- stop_loss_pct should be 3-8% for swing trades, 8-15% for position trades
+- risk_reward_ratio should be >= 2.0 for attractive trades
 """
 
     user_prompt = f"""
@@ -758,51 +818,44 @@ REFLECTION
 
 FINAL DECISION TASK
 ===================
-Generate the FINAL trading recommendation that incorporates all insights.
+Generate the FINAL trading recommendation as structured JSON.
 
-Structure your response as:
+Key requirements:
+1. verdict: ATTRACTIVE, NOT_ATTRACTIVE, or UNCLEAR
+2. confidence: 1-10 integer score
+3. risk_management.stop_loss: A specific price level (REQUIRED if ATTRACTIVE)
+4. risk_management.stop_loss_pct: Distance from entry as % (e.g. 5.0 = 5% below)
+5. position_sizing.recommended_pct: % of account to allocate
+6. acknowledged_risks: List specific risks, not vague platitudes
+7. checklist: Actionable items the trader should verify
 
-## FINAL VERDICT
-
-**VERDICT:** [ATTRACTIVE | NOT ATTRACTIVE | UNCLEAR] - Confidence: [HIGH | MEDIUM | LOW]
-
-**Quick Summary:** One paragraph summary of the decision.
-
-## VIX ROC MARKET TIMING
-
-[Your interpretation of the VIX ROC signal and what it means for this trade]
-
-## POSITION SIZING RECOMMENDATION
-
-Based on volatility prediction:
-- Suggested size: [X]% of account
-- Rationale: [Why this size]
-
-## TECHNICAL ANALYSIS SUMMARY
-
-[Key technical points]
-
-## RISK MANAGEMENT
-
-- Entry: $[price] or [condition]
-- Stop Loss: $[price] ([X] ATR away)
-- Target: $[price] (R:R = [X]:1)
-- Max Loss: [X]% of account
-
-## ACKNOWLEDGED UNCERTAINTIES
-
-[Valid concerns from the critique that traders should monitor]
-
-## FINAL CHECKLIST
-
-Before taking this trade, confirm:
-☐ [Item 1]
-☐ [Item 2]
-☐ [Item 3]
-☐ [Item 4]
+If NOT_ATTRACTIVE or UNCLEAR, set entry/stop/target to null and recommended_pct to 0.
 """
 
-    return _call_llm(system_prompt, user_prompt)
+    try:
+        raw_decision = _call_llm_structured(
+            system_prompt, user_prompt, TRADING_DECISION_SCHEMA
+        )
+        return parse_structured_decision(raw_decision)
+    except Exception as e:
+        logger.warning("Structured decision failed, falling back to text: %s", e)
+        # Fallback: call regular LLM and return a dict with the text
+        text = _call_llm(system_prompt, user_prompt)
+        return {
+            "verdict": "UNCLEAR",
+            "confidence": 3,
+            "summary": text[:500],
+            "vix_roc_assessment": {"signal": "NEUTRAL", "detail": "Fallback mode"},
+            "position_sizing": {"recommended_pct": 0, "rationale": "Structured output failed"},
+            "technical_summary": "",
+            "risk_management": {
+                "entry_price": None, "stop_loss": None, "stop_loss_pct": None,
+                "target_price": None, "risk_reward_ratio": None, "max_loss_pct": None,
+            },
+            "acknowledged_risks": ["Structured output parsing failed - treat with caution"],
+            "checklist": [],
+            "_raw_text": text,
+        }
 
 
 def analyze_trade_reflexion(
@@ -941,6 +994,17 @@ def analyze_trade_reflexion(
         tool_results=tool_results,
     )
     
+    if verbose and isinstance(final_decision, dict):
+        v = final_decision.get("verdict", "?")
+        c = final_decision.get("confidence", "?")
+        s = final_decision.get("summary", "")[:200]
+        rm = final_decision.get("risk_management", {})
+        stop = rm.get("stop_loss")
+        print(f"\n[STRUCTURED VERDICT] {v} — Confidence: {c}/10")
+        print(f"[SUMMARY] {s}...")
+        if stop:
+            print(f"[STOP LOSS] ${stop:.2f}")
+    
     return {
         "initial_analysis": initial_analysis,
         "critique": critique,
@@ -952,6 +1016,56 @@ def analyze_trade_reflexion(
 
 def format_full_report(result: Dict[str, str]) -> str:
     """Format the full reflexion result as a markdown report."""
+    final = result.get("final_decision", {})
+    
+    # Handle both structured (dict) and legacy (str) final decisions
+    if isinstance(final, dict):
+        verdict = final.get("verdict", "UNCLEAR")
+        confidence = final.get("confidence", "?")
+        summary = final.get("summary", "")
+        vix = final.get("vix_roc_assessment", {})
+        sizing = final.get("position_sizing", {})
+        tech = final.get("technical_summary", "")
+        risk = final.get("risk_management", {})
+        risks = final.get("acknowledged_risks", [])
+        checklist = final.get("checklist", [])
+        
+        decision_section = f"""## Phase 4: Final Decision (Structured)
+
+**VERDICT: {verdict}** — Confidence: {confidence}/10
+
+### Summary
+{summary}
+
+### VIX ROC Assessment
+Signal: {vix.get('signal', 'N/A')}
+{vix.get('detail', '')}
+
+### Position Sizing
+Recommended: {sizing.get('recommended_pct', 0)}% of account
+Rationale: {sizing.get('rationale', 'N/A')}
+
+### Technical Summary
+{tech}
+
+### Risk Management
+| Field | Value |
+|-------|-------|
+| Entry Price | {f"${risk['entry_price']:.2f}" if risk.get('entry_price') else 'N/A'} |
+| Stop Loss | {f"${risk['stop_loss']:.2f}" if risk.get('stop_loss') else 'N/A'} |
+| Stop Distance | {f"{risk['stop_loss_pct']:.1f}%" if risk.get('stop_loss_pct') else 'N/A'} |
+| Target Price | {f"${risk['target_price']:.2f}" if risk.get('target_price') else 'N/A'} |
+| Risk:Reward | {f"{risk['risk_reward_ratio']:.1f}:1" if risk.get('risk_reward_ratio') else 'N/A'} |
+| Max Loss | {f"{risk['max_loss_pct']:.1f}%" if risk.get('max_loss_pct') else 'N/A'} |
+
+### Acknowledged Risks
+{chr(10).join(f"- {r}" for r in risks) if risks else "None specified"}
+
+### Pre-Trade Checklist
+{chr(10).join(f"- [ ] {c}" for c in checklist) if checklist else "None specified"}"""
+    else:
+        decision_section = f"## Phase 4: Final Decision (Refined)\n\n{final}"
+
     return f"""
 # Trading Analysis Report (Reflexion Agent)
 
@@ -977,9 +1091,7 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ---
 
-## Phase 4: Final Decision (Refined)
-
-{result['final_decision']}
+{decision_section}
 
 ---
 
@@ -1023,7 +1135,23 @@ if __name__ == "__main__":
         print("\n" + "=" * 70)
         print("FINAL DECISION")
         print("=" * 70)
-        print(result["final_decision"])
+        fd = result["final_decision"]
+        if isinstance(fd, dict):
+            print(f"  VERDICT:    {fd.get('verdict', 'N/A')}")
+            print(f"  CONFIDENCE: {fd.get('confidence', 'N/A')}/10")
+            print(f"  SUMMARY:    {fd.get('summary', '')}")
+            rm = fd.get("risk_management", {})
+            if rm:
+                if rm.get("entry_price"):
+                    print(f"  ENTRY:      ${rm['entry_price']:.2f}")
+                if rm.get("stop_loss"):
+                    print(f"  STOP LOSS:  ${rm['stop_loss']:.2f} ({rm.get('stop_loss_pct', 'N/A')}%)")
+                if rm.get("target_price"):
+                    print(f"  TARGET:     ${rm['target_price']:.2f}")
+                if rm.get("risk_reward_ratio"):
+                    print(f"  R:R RATIO:  {rm['risk_reward_ratio']}")
+        else:
+            print(fd)
     else:
         # Interactive mode
         print("\n[Reflexion Trading Agent] Ctrl+C or type 'q' to exit.")
@@ -1047,4 +1175,20 @@ if __name__ == "__main__":
             print("\n" + "=" * 70)
             print("FINAL DECISION")
             print("=" * 70)
-            print(result["final_decision"])
+            fd = result["final_decision"]
+            if isinstance(fd, dict):
+                print(f"  VERDICT:    {fd.get('verdict', 'N/A')}")
+                print(f"  CONFIDENCE: {fd.get('confidence', 'N/A')}/10")
+                print(f"  SUMMARY:    {fd.get('summary', '')}")
+                rm = fd.get("risk_management", {})
+                if rm:
+                    if rm.get("entry_price"):
+                        print(f"  ENTRY:      ${rm['entry_price']:.2f}")
+                    if rm.get("stop_loss"):
+                        print(f"  STOP LOSS:  ${rm['stop_loss']:.2f} ({rm.get('stop_loss_pct', 'N/A')}%)")
+                    if rm.get("target_price"):
+                        print(f"  TARGET:     ${rm['target_price']:.2f}")
+                    if rm.get("risk_reward_ratio"):
+                        print(f"  R:R RATIO:  {rm['risk_reward_ratio']}")
+            else:
+                print(fd)

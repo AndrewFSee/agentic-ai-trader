@@ -70,8 +70,12 @@ ml_models/research_reports/**/*.md
 research_reports/**/*.md
 
 # ==================== LIVE TESTING & EXPERIMENTS ====================
-# Live testing simulations and experiments (not for GitHub)
-live_testing/
+# Live testing data & runtime artifacts (not for GitHub)
+live_testing/data/
+live_testing/db/
+live_testing/simulation_results/
+live_testing/trading_logs/
+live_testing/__pycache__/
 experimental/
 trading_logs/
 simulation_results/
