@@ -80,6 +80,23 @@ CORE MARKET DATA TOOLS
 
 - news_sentiment_finviz_finbert
   - Use when the user cares about recent news/sentiment or catalysts.
+  - Now includes topic classification (earnings, M&A, litigation, etc.) and
+    topic-adjusted sentiment alongside raw FinBERT scores.
+
+- topic_sentiment_newsdb
+  - Deep sentiment analysis from local news database (210k+ S&P500 articles).
+  - Classifies headlines by topic, computes topic-adjusted composite score.
+  - Returns topic breakdown, high-signal alerts, and dual interpretation
+    (event-driven for 7d window, contrarian for 20d window).
+  - RECOMMENDED for any S&P 500 stock when sentiment context is needed.
+  - Much richer signal than Finviz alone.
+
+- earnings_topic_signal
+  - Highest-alpha sentiment signal (IC ≈ +0.021, 52× raw FinBERT).
+  - Filters to earnings/analyst news, checks FinBERT agreement.
+  - Returns direction, confidence, expected alpha, and tradeable flag.
+  - Use as a CONFIRMING factor alongside technical and price analysis.
+  - Requires local news database.
 
 ==============================================================================
 PRIMARY RISK MANAGEMENT TOOLS (MUST CALL FOR ANY TRADE EVALUATION)
@@ -165,12 +182,14 @@ For comprehensive trading analysis, you MUST call:
 3. vol_prediction (PRIMARY - position sizing)
 4. polygon_technical_rsi + polygon_technical_macd (momentum/trend)
 5. bollinger_bands (volatility/overbought/oversold)
-6. news_sentiment_finviz_finbert (catalysts and sentiment)
+6. news_sentiment_finviz_finbert (live catalysts and sentiment)
+7. topic_sentiment_newsdb (deep topic-classified sentiment from news database)
+8. earnings_topic_signal (highest-alpha sentiment — confirming factor)
 
 Optional additions:
-7. polygon_ticker_details (company context)
-8. polygon_earnings (fundamental growth trends)
-9. polygon_technical_sma or polygon_technical_ema (trend analysis)
+9. polygon_ticker_details (company context)
+10. polygon_earnings (fundamental growth trends)
+11. polygon_technical_sma or polygon_technical_ema (trend analysis)
 
 NOTE: The system uses Polygon.io with 100,000 calls/month, so select 6-9 tools
 for a complete picture without worrying about rate limits.

@@ -251,6 +251,97 @@ def _format_news_summary(news_result: Dict[str, Any] | None) -> str:
     return "\n".join([l for l in lines if l])
 
 
+def _format_topic_newsdb_summary(result: Dict[str, Any] | None) -> str:
+    """Format topic-classified sentiment from the news database."""
+    if not result:
+        return "No topic sentiment data available (news database not queried)."
+    if result.get("error"):
+        return f"Topic sentiment error: {result['error']}"
+    if result.get("num_articles", 0) == 0:
+        return result.get("note", "No articles found in news database for this ticker.")
+
+    lines = [
+        f"Symbol: {result['symbol']}",
+        f"Window: {result['window_days']} days | Articles analyzed: {result['num_articles']}",
+        f"Composite topic-adjusted score: {result['composite_score']} (range: -1 to +1)",
+        f"Signal: {result['signal']} | Confidence: {result['confidence']}",
+    ]
+
+    # Topic breakdown
+    breakdown = result.get("topic_breakdown", {})
+    if breakdown:
+        lines.append("")
+        lines.append("Topic breakdown:")
+        for topic, info in sorted(breakdown.items(), key=lambda x: abs(x[1].get("avg_sentiment", 0)), reverse=True):
+            count = info.get("count", 0)
+            avg_sent = info.get("avg_sentiment", 0)
+            is_high = info.get("is_high_signal", False)
+            marker = " ★ HIGH-SIGNAL" if is_high else ""
+            lines.append(f"  - {topic}: {count} articles, avg sentiment {avg_sent:+.3f}{marker}")
+
+    # Alerts
+    alerts = result.get("alerts", [])
+    if alerts:
+        lines.append("")
+        lines.append("⚠ High-signal alerts:")
+        for alert in alerts:
+            lines.append(f"  - {alert}")
+
+    # Interpretation guidance
+    interp = result.get("interpretation", {})
+    if interp:
+        lines.append("")
+        lines.append(f"Event-driven (≤7d): {interp.get('event_driven', '')}")
+        lines.append(f"Contrarian (>14d): {interp.get('contrarian', '')}")
+
+    # Recent articles
+    recent = result.get("recent_articles", [])
+    if recent:
+        lines.append("")
+        lines.append("Recent articles (title | topic | signal):")
+        for art in recent[:5]:
+            lines.append(f"  - {art['title'][:80]} | {art['topic']} | {art['signal']}")
+
+    return "\n".join(lines)
+
+
+def _format_earnings_topic_summary(result: Dict[str, Any] | None) -> str:
+    """Format earnings topic signal (highest-alpha sentiment feature)."""
+    if not result:
+        return "No earnings topic signal available (not queried)."
+    if result.get("error"):
+        return f"Earnings topic signal error: {result['error']}"
+    if not result.get("is_tradeable", False) and result.get("earnings_articles_found", 0) == 0:
+        return result.get("note", "No earnings/analyst articles found for this ticker.")
+
+    lines = [
+        f"Symbol: {result['symbol']}",
+        f"Window: {result.get('window_days', 14)} days",
+        f"Total articles: {result.get('num_articles_total', 0)} | Earnings-related: {result.get('earnings_articles_found', 0)}",
+        f"Direction: {result.get('direction', 'N/A')} | Confidence: {result.get('confidence', 0):.0%}",
+        f"Tradeable: {'YES' if result.get('is_tradeable') else 'NO'}",
+    ]
+
+    if result.get("expected_alpha_bps") is not None:
+        lines.append(f"Expected alpha: {result['expected_alpha_bps']} bps (5-day)")
+
+    if result.get("high_conviction"):
+        lines.append("★ HIGH CONVICTION — historically ~2.1% 5-day alpha")
+
+    if result.get("topic_sentiment") is not None:
+        lines.append(f"Topic sentiment: {result['topic_sentiment']:+.3f}")
+    if result.get("finbert_sentiment") is not None:
+        lines.append(f"FinBERT sentiment: {result['finbert_sentiment']:+.3f}")
+    if result.get("models_agree") is not None:
+        lines.append(f"Models agree: {'YES' if result['models_agree'] else 'NO'}")
+    if result.get("earnings_surprise"):
+        lines.append("★ EARNINGS SURPRISE — strong sentiment deviation detected")
+
+    lines.append(result.get("note", ""))
+
+    return "\n".join([l for l in lines if l])
+
+
 def _format_technical_summary(tool_results: Dict[str, Any]) -> str:
     """
     Format RSI, MACD, SMA, EMA, Bollinger Bands into a compact text block.
@@ -808,6 +899,12 @@ def analyze_trade_agent(
     news_summary_text = _format_news_summary(
         tool_results.get("news_sentiment_finviz_finbert")
     )
+    topic_newsdb_text = _format_topic_newsdb_summary(
+        tool_results.get("topic_sentiment_newsdb")
+    )
+    earnings_topic_text = _format_earnings_topic_summary(
+        tool_results.get("earnings_topic_signal")
+    )
     tech_summary_text = _format_technical_summary(tool_results)
     ticker_details_text = _format_ticker_details(
         tool_results.get("polygon_ticker_details")
@@ -855,6 +952,8 @@ You MUST base all conclusions on:
 - the provided company details (market cap, sector, description),
 - the provided real-time snapshot (current price, day's range),
 - the provided news + FinBERT sentiment summary (if available),
+- the provided TOPIC-CLASSIFIED SENTIMENT from the news database (if available),
+- the provided EARNINGS TOPIC SIGNAL (if available — this is the highest-alpha sentiment feature),
 - the provided REGIME DETECTION results (Wasserstein volatility-based and/or HMM trend-based),
 - and the provided ML MODEL PREDICTIONS (if available).
 
@@ -877,6 +976,15 @@ REGIME DETECTION GUIDANCE:
 
 ML MODEL PREDICTIONS GUIDANCE:
 - ML predictions come from trained models (Sharpe 1.34-1.52) on 25 stocks, 2020-2025 data.
+
+TOPIC SENTIMENT GUIDANCE:
+- Topic-classified sentiment has 52× higher information coefficient than raw FinBERT.
+- HIGH-SIGNAL TOPICS (litigation, earnings, management, M&A) carry 1.5× weight — pay close attention.
+- Fresh high-signal news (3-7 days) has MOMENTUM — act with the signal direction.
+- Accumulated sentiment over longer windows (>14 days) tends to MEAN-REVERT — fade extremes.
+- EARNINGS TOPIC SIGNAL is the strongest alpha predictor: high-conviction signals show ~2.1% 5-day alpha.
+- Use earnings topic signal as a CONFIRMING factor: it should agree with technicals before acting.
+- If topic alerts mention litigation or management changes, these are material catalysts — weight heavily.
 - CONSENSUS INTERPRETATION:
   * 75-100% agreement = STRONG signal (high confidence, models aligned)
   * 50-74% agreement = WEAK signal (moderate confidence, some disagreement)
@@ -924,6 +1032,14 @@ TECHNICAL INDICATORS (RSI / MACD / SMA / EMA / Bollinger Bands)
 RECENT NEWS + FINVIZ + FINBERT SENTIMENT
 ----------------------------------------
 {news_summary_text}
+
+TOPIC-CLASSIFIED SENTIMENT (News Database)
+-------------------------------------------
+{topic_newsdb_text}
+
+EARNINGS TOPIC SIGNAL (Highest Alpha)
+--------------------------------------
+{earnings_topic_text}
 
 MACRO & LIQUIDITY INDICATORS
 ----------------------------
