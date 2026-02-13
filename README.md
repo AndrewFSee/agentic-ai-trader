@@ -89,10 +89,82 @@ python analyze_trade_agent_reflexion.py
 
 ## Architecture
 
-```
-User Query → RAG Search (trading books) → Planner (tool selection)
-           → Tool Execution (market data) → Reflexion Agent
-           → Self-Critique → Final Decision
+```mermaid
+flowchart TD
+    START([👤 User Query\nTrading idea + Symbol]) --> RAG
+
+    subgraph RAG["1 · RAG Retrieval"]
+        RAG1[📚 Idea Search\nk=6 chunks matching\nsymbol + trading idea]
+        RAG2[📖 Risk Rules Search\nk=6 chunks on\nposition sizing & discipline]
+    end
+
+    RAG --> PLANNER
+
+    subgraph PLANNER["2 · LLM Planner  ·  gpt-4.1"]
+        P1[Analyze query →\nJSON list of tool calls]
+    end
+
+    PLANNER --> TOOLS
+
+    subgraph TOOLS["3 · Tool Execution  ·  5-6 tools"]
+        direction LR
+        T1[📈 Polygon\nPrice Data]
+        T2[📊 RSI / MACD\nBollinger / ATR]
+        T3[📰 FinBERT\nNews Sentiment]
+        T4[🔴 VIX ROC\nRisk Signal]
+        T5[🌊 Vol\nPrediction]
+        T6[🔬 Regime\nDetection]
+    end
+
+    TOOLS --> MEMORY
+
+    subgraph MEMORY["4 · Trade Memory"]
+        M1[🧠 Past Trades\nSimilar symbol/conditions]
+        M2[📝 Lessons Learned\nFrom previous outcomes]
+    end
+
+    MEMORY --> REFLEXION
+
+    subgraph REFLEXION["5 · Reflexion Loop  ·  4 LLM calls"]
+        direction TB
+        S1["STEP 1 — GENERATE\nInitial Analysis\n─────────────────\nSynthesize: tool data + book excerpts\n+ trade lessons → preliminary verdict"]
+        S2["STEP 2 — EVALUATE\nSelf-Critique\n─────────────────\nAttack the analysis:\nblind spots, overconfidence,\nmissing risks, confirmation bias"]
+        S3["STEP 3 — REFLECT\nExtract Learnings\n─────────────────\nWhat was wrong? What to fix?\nConsolidate corrections"]
+        S4["STEP 4 — REFINE\nFinal Decision ★ Structured JSON\n─────────────────\nverdict · confidence · entry\nstop_loss · target · R:R ratio\nposition_size · risks · checklist"]
+        S1 --> S2 --> S3 --> S4
+    end
+
+    S4 --> OUTPUT
+
+    subgraph OUTPUT["6 · Structured Output"]
+        direction LR
+        O1["🟢 ATTRACTIVE\n+ strict rules"]
+        O2["🔴 NOT ATTRACTIVE"]
+        O3["🟡 UNCLEAR"]
+    end
+
+    OUTPUT --> EXECUTION
+
+    subgraph EXECUTION["7 · Paper Trader Execution"]
+        direction TB
+        E0{"Daily:\nPrice ≤ Stop Loss?"}
+        E0 -- Yes --> E1[🛑 Force Close\nStop-Loss Triggered]
+        E0 -- No --> E2{Strategy Signal?}
+        E2 -- BUY & conf > 3 --> E3["✅ Open Position\nwith stop / target / confidence"]
+        E2 -- SELL --> E4[📤 Close Position]
+        E2 -- HOLD / conf ≤ 3 --> E5[⏸️ No Action]
+    end
+
+    style RAG fill:#1a365d,stroke:#63b3ed,color:#fff
+    style PLANNER fill:#2d3748,stroke:#a0aec0,color:#fff
+    style TOOLS fill:#1a365d,stroke:#63b3ed,color:#fff
+    style MEMORY fill:#2d3748,stroke:#a0aec0,color:#fff
+    style REFLEXION fill:#2c5282,stroke:#90cdf4,color:#fff
+    style OUTPUT fill:#2d3748,stroke:#a0aec0,color:#fff
+    style EXECUTION fill:#1a365d,stroke:#63b3ed,color:#fff
+    style S4 fill:#2b6cb0,stroke:#bee3f8,color:#fff
+    style E1 fill:#9b2c2c,stroke:#feb2b2,color:#fff
+    style E3 fill:#276749,stroke:#9ae6b4,color:#fff
 ```
 
 ### Core Components
