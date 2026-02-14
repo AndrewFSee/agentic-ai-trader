@@ -81,6 +81,21 @@ CORE MARKET DATA TOOLS
   - R² tells you how market-driven the stock is (low R² = regime signal less relevant).
   - ALWAYS call alongside bocpd_regime for regime-conditioned beta targeting.
 
+- relative_strength
+  - Compute a stock's excess return vs SPY and its sector ETF over 21d/63d/126d/252d.
+  - Identifies market LEADERS (outperforming) and LAGGARDS (underperforming).
+  - Composite RS score weighted toward longer timeframes for conviction.
+  - In BULL regimes, prefer leaders (RS > 5). In BEAR, avoid laggards (they fall hardest).
+  - Rising RS + bull transition = stock may lead the recovery.
+  - ALWAYS call alongside stock_beta and bocpd_regime for complete stock selection.
+
+- earnings_proximity
+  - Check how close the next EARNINGS DATE is for a stock.
+  - Flags binary event risk: earnings gaps can blow through stop-losses.
+  - IMMINENT (<3d) = reduce to 25-50% sizing. HIGH (<7d) = reduce 30-50%.
+  - Also detects recent earnings (<5 days) for post-earnings drift awareness.
+  - ALWAYS call to avoid recommending swing trades right before earnings.
+
 - polygon_earnings
   - Use for quarterly earnings data with revenue and EPS growth rates.
   - Shows last 8 quarters with QoQ and YoY growth trends.
@@ -177,6 +192,8 @@ COMBINED USAGE:
 - vol_prediction tells you WHETHER VOL IS ABOUT TO CHANGE (regime transition probability)
 - bocpd_regime tells you WHAT KIND OF MARKET we are in (bull/bear/transition/crisis)
 - stock_beta tells you HOW SENSITIVE this stock is to the market (beta + R²)
+- relative_strength tells you if this stock is a LEADER or LAGGARD vs market + sector
+- earnings_proximity tells you if EARNINGS are imminent (binary event risk)
 - Together they provide a complete risk management framework
 
 ==============================================================================
@@ -217,11 +234,13 @@ For comprehensive trading analysis, you MUST call:
 3. vol_prediction (PRIMARY - volatility regime transition probabilities)
 4. bocpd_regime (PRIMARY - market regime context: bull/bear/transition/crisis)
 5. stock_beta (beta + R² vs SPY for regime-conditioned beta targeting)
-6. polygon_technical_rsi + polygon_technical_macd (momentum/trend)
-7. bollinger_bands (volatility/overbought/oversold)
-8. news_sentiment_finviz_finbert (live catalysts and sentiment)
-9. topic_sentiment_newsdb (deep topic-classified sentiment from news database)
-10. earnings_topic_signal (highest-alpha sentiment — confirming factor)
+6. relative_strength (excess returns vs SPY + sector — leader or laggard?)
+7. earnings_proximity (days to next earnings — event risk check)
+8. polygon_technical_rsi + polygon_technical_macd (momentum/trend)
+9. bollinger_bands (volatility/overbought/oversold)
+10. news_sentiment_finviz_finbert (live catalysts and sentiment)
+11. topic_sentiment_newsdb (deep topic-classified sentiment from news database)
+12. earnings_topic_signal (highest-alpha sentiment — confirming factor)
 
 Optional additions:
 9. polygon_ticker_details (company context)
@@ -265,6 +284,8 @@ REQUIRED for any trade evaluation:
 - vol_prediction (PRIMARY volatility regime transitions)
 - bocpd_regime (PRIMARY market regime context)
 - stock_beta (beta + R² for regime-conditioned sizing)
+- relative_strength (leader/laggard stock selection)
+- earnings_proximity (event risk check)
 
 Examples of good behavior:
 
@@ -274,6 +295,8 @@ Examples of good behavior:
   - vol_prediction
   - bocpd_regime
   - stock_beta
+  - relative_strength
+  - earnings_proximity
   - polygon_technical_rsi
   - polygon_technical_macd
   - bollinger_bands
@@ -285,6 +308,8 @@ Examples of good behavior:
   - vol_prediction
   - bocpd_regime
   - stock_beta
+  - relative_strength
+  - earnings_proximity
   - polygon_ticker_details
   - polygon_earnings
   - polygon_dividends
@@ -296,6 +321,7 @@ Examples of good behavior:
   - vol_prediction
   - bocpd_regime
   - stock_beta
+  - relative_strength
   - polygon_technical_rsi
   - polygon_technical_macd
 

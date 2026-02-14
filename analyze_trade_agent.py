@@ -917,6 +917,86 @@ def _format_stock_beta(beta_result: Dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _format_relative_strength(rs_result: Dict[str, Any] | None) -> str:
+    """Format relative strength results for the decision LLM."""
+    if not rs_result:
+        return "Relative strength analysis not available."
+
+    if rs_result.get("error"):
+        return f"Relative strength: {rs_result['error']}"
+
+    symbol = rs_result.get("symbol", "N/A")
+    sector_etf = rs_result.get("sector_etf", "unknown")
+    composite = rs_result.get("composite_rs_score")
+    rank_label = rs_result.get("rs_rank_label", "")
+    rs_trend = rs_result.get("rs_trend", "unknown")
+    vs_spy = rs_result.get("vs_spy", {})
+    vs_sector = rs_result.get("vs_sector")
+    regime_guide = rs_result.get("regime_rs_guidance", {})
+
+    lines = [f"Relative Strength for {symbol} (sector ETF: {sector_etf}):"]
+    lines.append(f"  Composite RS Score: {composite}  ({rank_label})")
+    lines.append(f"  RS Trend: {rs_trend}")
+
+    lines.append("  Performance vs SPY:")
+    for tf in ["21d", "63d", "126d", "252d"]:
+        if tf in vs_spy:
+            d = vs_spy[tf]
+            lines.append(
+                f"    {tf}: {symbol} {d['stock_return']:+.1f}%  vs  SPY {d['spy_return']:+.1f}%  "
+                f"→ excess {d['excess_return']:+.1f}%"
+            )
+
+    if vs_sector:
+        lines.append(f"  Performance vs Sector ({sector_etf}):")
+        for tf in ["21d", "63d", "126d", "252d"]:
+            if tf in vs_sector:
+                d = vs_sector[tf]
+                lines.append(
+                    f"    {tf}: sector {d['sector_return']:+.1f}%  →  excess vs sector {d['excess_vs_sector']:+.1f}%"
+                )
+
+    if regime_guide:
+        lines.append("  Regime-RS Guidance:")
+        for regime, note in regime_guide.items():
+            lines.append(f"    {regime.upper():20s} {note}")
+
+    return "\n".join(lines)
+
+
+def _format_earnings_proximity(ep_result: Dict[str, Any] | None) -> str:
+    """Format earnings proximity / catalyst risk for the decision LLM."""
+    if not ep_result:
+        return "Earnings proximity data not available."
+
+    if ep_result.get("error"):
+        return f"Earnings proximity: {ep_result['error']}"
+
+    symbol = ep_result.get("symbol", "N/A")
+    next_date = ep_result.get("next_earnings_date")
+    days_to = ep_result.get("days_to_next_earnings")
+    last_date = ep_result.get("last_earnings_date")
+    days_since = ep_result.get("days_since_last_earnings")
+    risk = ep_result.get("earnings_risk", "unknown")
+    guidance = ep_result.get("guidance", "")
+    post_note = ep_result.get("post_earnings_note", "")
+
+    lines = [f"Earnings Proximity for {symbol}:"]
+    if next_date and days_to is not None:
+        lines.append(f"  Next Earnings: {next_date}  ({days_to} days away)")
+        lines.append(f"  Event Risk: {risk}")
+        lines.append(f"  Guidance: {guidance}")
+    else:
+        lines.append("  Next Earnings: date not available")
+
+    if last_date and days_since is not None:
+        lines.append(f"  Last Earnings: {last_date}  ({days_since} days ago)")
+    if post_note:
+        lines.append(f"  ⚠ {post_note}")
+
+    return "\n".join(lines)
+
+
 def _format_regime_wasserstein(wass_result: Dict[str, Any] | None) -> str:
     """Format Wasserstein regime detection results for the decision LLM."""
     if not wass_result:
@@ -1115,6 +1195,16 @@ def analyze_trade_agent(
     has_stock_beta = stock_beta_result and not stock_beta_result.get("error")
     stock_beta_text = _format_stock_beta(stock_beta_result) if has_stock_beta else ""
 
+    # Format relative strength if available
+    rs_result = tool_results.get("relative_strength")
+    has_rs = rs_result and not rs_result.get("error")
+    rs_text = _format_relative_strength(rs_result) if has_rs else ""
+
+    # Format earnings proximity if available
+    ep_result = tool_results.get("earnings_proximity")
+    has_ep = ep_result and not ep_result.get("error")
+    ep_text = _format_earnings_proximity(ep_result) if has_ep else ""
+
     has_wasserstein = regime_wasserstein_result and not regime_wasserstein_result.get("error")
     has_hmm = regime_hmm_result and not regime_hmm_result.get("error")
     has_consensus = regime_consensus_result and not regime_consensus_result.get("error")
@@ -1146,6 +1236,8 @@ You MUST base all conclusions on:
 - the provided REGIME DETECTION results (Wasserstein volatility-based and/or HMM trend-based),
 - the provided BOCPD MARKET REGIME (bull/bear/transition/crisis/consolidation from Bayesian changepoint detection),
 - the provided STOCK BETA vs SPY (rolling beta, R², and regime-conditioned beta targeting guidance, if available),
+- the provided RELATIVE STRENGTH vs SPY and sector (is this stock a leader or laggard? if available),
+- the provided EARNINGS PROXIMITY (how close is the next earnings date — catalyst/event risk, if available),
 - the provided MARKET RISK ASSESSMENT (ML-based drawdown probability + forward volatility, if available),
 - and the provided ML MODEL PREDICTIONS (if available).
 
@@ -1157,6 +1249,8 @@ Use the books to justify how you interpret:
 - MARKET RISK ASSESSMENT (drawdown probability and forward volatility),
 - BOCPD MARKET REGIME (what kind of market are we in — bull, bear, transition, crisis, consolidation),
 - STOCK BETA vs SPY (is this stock's beta appropriate for the current regime?),
+- RELATIVE STRENGTH (is this stock a leader outperforming the market, or a laggard?),
+- EARNINGS PROXIMITY (is there an imminent earnings date creating gap risk?),
 - REGIME CLASSIFICATION (volatility regimes and trend regimes),
 - ML MODEL PREDICTIONS (consensus and confidence levels),
 - and how you construct risk management and sizing.
@@ -1295,6 +1389,22 @@ STOCK BETA vs SPY (Regime-Conditioned Beta Targeting)
 {stock_beta_text}
 """)
 
+    # Add relative strength section if available
+    if has_rs:
+        user_prompt_parts.append(f"""
+RELATIVE STRENGTH (Stock vs Sector vs Market)
+-----------------------------------------------
+{rs_text}
+""")
+
+    # Add earnings proximity section if available
+    if has_ep:
+        user_prompt_parts.append(f"""
+EARNINGS PROXIMITY (Catalyst Risk)
+------------------------------------
+{ep_text}
+""")
+
     # Only add legacy regime sections if data is available
     if has_wasserstein or has_hmm or has_consensus:
         regime_section = "\nREGIME DETECTION RESULTS\n------------------------\n"
@@ -1405,6 +1515,45 @@ Using ONLY the information above:
 """
         next_section += 1
 
+    # Add relative strength analysis section
+    if has_rs:
+        user_prompt += f"""
+{next_section}. RELATIVE STRENGTH (LEADERSHIP):
+   - Report the stock's composite RS score and rank (leader / in-line / laggard).
+   - Compare performance vs SPY across timeframes (21d, 63d, 126d, 252d):
+     * Positive excess at EVERY timeframe = true market leader.
+     * Negative excess at EVERY timeframe = persistent laggard — avoid in most regimes.
+     * Mixed signals = rotation or mean-reversion candidate — proceed with caution.
+   - If sector data is available, check excess vs sector ETF:
+     * Outperforming sector AND market = strongest conviction.
+     * Underperforming sector but outperforming market = sector rotation risk.
+   - Check RS trend (improving / deteriorating / stable):
+     * Improving RS in a bull/transition regime = high conviction entry.
+     * Deteriorating RS in a bull regime = warning sign — stock may be rotating out.
+   - Cross-reference with beta: high-beta LEADER in a bull regime = ideal setup.
+   - In bear regimes, even leaders typically decline — RS is most useful for RECOVERY stock selection.
+"""
+        next_section += 1
+
+    # Add earnings proximity analysis section
+    if has_ep:
+        user_prompt += f"""
+{next_section}. EARNINGS PROXIMITY (EVENT RISK):
+   - Report how many days until the next earnings release and the risk classification.
+   - IMMINENT (<3 days): EXTREME binary event risk — reduce to 25-50% of normal sizing or avoid.
+     Earnings gaps frequently blow past stop-loss levels, invalidating technical stops.
+   - HIGH (<7 days): Elevated risk — reduce 30-50% or wait until after the report.
+   - MODERATE (<14 days): Be aware of rising implied vol, but normal sizing is OK.
+   - LOW/NONE: Minimal event risk — proceed normally.
+   - If earnings JUST happened (within 5 days), note post-earnings drift:
+     * Positive surprise + strong RS = likely continuation, lean into the trend.
+     * Negative surprise = further selling likely, avoid catching the falling knife.
+   - CRITICAL: Earnings proximity overrides other signals for position sizing.
+     Even if technicals, regime, and RS all look perfect, an imminent earnings date
+     must reduce position size due to unhedgeable gap risk.
+"""
+        next_section += 1
+
     # Add legacy regime analysis section only if regime data is available
     if has_wasserstein or has_hmm or has_consensus:
         user_prompt += f"""
@@ -1481,22 +1630,28 @@ Using ONLY the information above:
     ml_guidance = ", ML predictions," if has_ml else ""
     market_risk_guidance = ", market risk assessment," if has_market_risk else ""
     bocpd_guidance = ", BOCPD market regime" if has_bocpd_regime else ""
+    beta_guidance = ", stock beta" if has_stock_beta else ""
+    rs_guidance = ", relative strength" if has_rs else ""
+    ep_guidance = ", earnings proximity" if has_ep else ""
     regime_guidance = " and REGIME CLASSIFICATION" if (has_wasserstein or has_hmm) else ""
     regime_risk_guidance = " ADJUSTED FOR REGIME" if (has_wasserstein or has_hmm or has_bocpd_regime) else ""
     market_risk_adjustment = " AND MARKET RISK" if has_market_risk else ""
     regime_risk_details = "\n   - If regime models disagree, recommend reducing position size or waiting for consensus." if has_consensus else ""
     regime_verdict_note = " (especially if regime models disagree)" if (has_wasserstein or has_hmm) else ""
     bocpd_verdict_note = " Unfavourable BOCPD regimes (bear/crisis) should lean toward UNCLEAR or NOT ATTRACTIVE." if has_bocpd_regime else ""
+    ep_verdict_note = " IMMINENT earnings should lean toward UNCLEAR unless the user explicitly accepts event risk." if has_ep else ""
     
     user_prompt += f"""
 {next_section}. EDGE ASSESSMENT:
    - Evaluate whether the proposed trade has a reasonable edge according to the books, given:
      - price/technicals,
      - fundamentals,
-     - sentiment{ml_guidance}{market_risk_guidance}{bocpd_guidance}{regime_guidance}.
+     - sentiment{ml_guidance}{market_risk_guidance}{bocpd_guidance}{beta_guidance}{rs_guidance}{ep_guidance}{regime_guidance}.
    - If data is missing (e.g., no fundamentals or no news), explicitly factor that into your conclusion.
-   - Synthesize ALL inputs: Do price, technicals, ML, regime, and sentiment ALIGN or CONFLICT?
-   - Strongest edge when multiple signals confirm each other.
+   - Synthesize ALL inputs: Do price, technicals, ML, regime, beta, RS, and sentiment ALIGN or CONFLICT?
+   - Strongest edge when multiple signals confirm each other.{'''
+   - A stock that is a market LEADER (positive RS), with regime-appropriate beta, in a bull BOCPD regime,
+     and no imminent earnings = highest conviction setup.''' if (has_rs and has_stock_beta and has_bocpd_regime) else ''}
 """
     next_section += 1
     
@@ -1509,6 +1664,7 @@ Using ONLY the information above:
      - risk/reward considerations (aimed R:R ratio, e.g., 2:1).{regime_risk_details}
      {'- Use market_risk suggested_position_pct as BASELINE size, then adjust for other factors.' if has_market_risk else ''}
      {'- If drawdown probability > 50%, strongly consider skipping the trade or using minimal size.' if has_market_risk else ''}
+     {'- If earnings are IMMINENT (<3 days), reduce position to 25-50% regardless of other signals.' if has_ep else ''}
      {'- Adjust size based on ML consensus: STRONG = normal, WEAK = reduce 30-50%, UNCLEAR = skip or minimal' if has_ml else ''}
 """
     next_section += 1
@@ -1518,7 +1674,7 @@ Using ONLY the information above:
    - Provide a verdict in EXACTLY one of these forms (put this on a separate line prefixed with 'VERDICT:'):
      - VERDICT: NOT ATTRACTIVE based on the books and current data
      - VERDICT: UNCLEAR / NEEDS MORE INFORMATION{regime_verdict_note}
-     - VERDICT: ATTRACTIVE IF STRICT RULES ARE FOLLOWED{f'- Your verdict MUST consider the regime analysis - uncertain regimes should lean toward UNCLEAR or NOT ATTRACTIVE.' if (has_wasserstein or has_hmm) else ''}{bocpd_verdict_note}
+     - VERDICT: ATTRACTIVE IF STRICT RULES ARE FOLLOWED{f'- Your verdict MUST consider the regime analysis - uncertain regimes should lean toward UNCLEAR or NOT ATTRACTIVE.' if (has_wasserstein or has_hmm) else ''}{bocpd_verdict_note}{ep_verdict_note}
 """
     next_section += 1
     

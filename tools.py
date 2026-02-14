@@ -1753,6 +1753,502 @@ register_tool({
 
 
 # =============================================================================
+# Relative Strength Tool (Stock vs Sector vs Market)
+# =============================================================================
+# Compares a stock's return against its sector ETF and SPY across multiple
+# timeframes.  Leaders outperform both; laggards underperform.
+# Combined with BOCPD regime + beta → full stock-selection framework:
+#   regime (context) + beta (sensitivity) + RS (leadership) = pick right stock.
+
+# GICS Sector → Primary ETF mapping (Select Sector SPDRs + a few extras)
+_SECTOR_ETF_MAP = {
+    # SIC-based broad buckets Polygon often returns
+    "technology": "XLK",
+    "information technology": "XLK",
+    "software": "XLK",
+    "electronic": "XLK",
+    "semiconductors": "XLK",
+    "communication services": "XLC",
+    "communications": "XLC",
+    "media": "XLC",
+    "telecommunications": "XLC",
+    "health care": "XLV",
+    "healthcare": "XLV",
+    "pharmaceutical": "XLV",
+    "biotechnology": "XLV",
+    "financials": "XLF",
+    "financial": "XLF",
+    "banks": "XLF",
+    "insurance": "XLF",
+    "consumer discretionary": "XLY",
+    "retail": "XLY",
+    "consumer staples": "XLP",
+    "food": "XLP",
+    "beverage": "XLP",
+    "household": "XLP",
+    "industrials": "XLI",
+    "industrial": "XLI",
+    "aerospace": "XLI",
+    "defense": "XLI",
+    "machinery": "XLI",
+    "energy": "XLE",
+    "oil": "XLE",
+    "gas": "XLE",
+    "petroleum": "XLE",
+    "utilities": "XLU",
+    "electric": "XLU",
+    "real estate": "XLRE",
+    "materials": "XLB",
+    "chemicals": "XLB",
+    "mining": "XLB",
+    "metals": "XLB",
+}
+
+# Ticker → well-known sector override (for popular tickers where SIC is vague)
+_TICKER_SECTOR_OVERRIDE = {
+    "AAPL": "XLK", "MSFT": "XLK", "NVDA": "XLK", "GOOG": "XLC", "GOOGL": "XLC",
+    "META": "XLC", "AMZN": "XLY", "TSLA": "XLY", "NFLX": "XLC", "DIS": "XLC",
+    "JPM": "XLF", "BAC": "XLF", "GS": "XLF", "V": "XLK", "MA": "XLK",
+    "UNH": "XLV", "JNJ": "XLV", "PFE": "XLV", "ABBV": "XLV", "LLY": "XLV",
+    "XOM": "XLE", "CVX": "XLE", "COP": "XLE",
+    "PG": "XLP", "KO": "XLP", "PEP": "XLP", "WMT": "XLP", "COST": "XLP",
+    "BA": "XLI", "CAT": "XLI", "HON": "XLI", "UPS": "XLI", "GE": "XLI",
+    "NEE": "XLU", "DUK": "XLU", "SO": "XLU",
+    "AMD": "XLK", "AVGO": "XLK", "INTC": "XLK", "CRM": "XLK", "ADBE": "XLK",
+    "ORCL": "XLK", "CSCO": "XLK", "TXN": "XLK", "QCOM": "XLK", "MU": "XLK",
+}
+
+
+def _resolve_sector_etf(symbol: str, sic_description: str | None = None) -> str | None:
+    """Resolve a ticker to its sector ETF using overrides → SIC description → None."""
+    symbol = symbol.upper()
+    if symbol in _TICKER_SECTOR_OVERRIDE:
+        return _TICKER_SECTOR_OVERRIDE[symbol]
+    if sic_description:
+        desc_lower = sic_description.lower()
+        for keyword, etf in _SECTOR_ETF_MAP.items():
+            if keyword in desc_lower:
+                return etf
+    return None
+
+
+def relative_strength_tool_fn(state: dict, args: dict) -> dict:
+    """
+    Compute relative strength of a stock vs its sector ETF and SPY
+    across 21d, 63d, 126d, and 252d timeframes.
+    """
+    import warnings as _w
+    if "tool_results" not in state:
+        state["tool_results"] = {}
+
+    symbol = args.get("symbol", "").upper()
+    if not symbol:
+        state["tool_results"]["relative_strength"] = {"error": "No symbol provided"}
+        return state
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        state["tool_results"]["relative_strength"] = {
+            "symbol": symbol,
+            "error": "yfinance not installed — required for relative strength"
+        }
+        return state
+
+    import numpy as np
+    import pandas as pd
+
+    # ------------------------------------------------------------------
+    # 1. Resolve sector ETF
+    # ------------------------------------------------------------------
+    # Try ticker_details already in state (from polygon_ticker_details call)
+    ticker_details = state.get("tool_results", {}).get("polygon_ticker_details")
+    sic_desc = None
+    if ticker_details and not ticker_details.get("error"):
+        sic_desc = ticker_details.get("sic_description")
+
+    sector_etf = _resolve_sector_etf(symbol, sic_desc)
+
+    # ------------------------------------------------------------------
+    # 2. Download price data (need ~260 trading days + buffer)
+    # ------------------------------------------------------------------
+    start = (pd.Timestamp.now() - pd.Timedelta(days=400)).strftime("%Y-%m-%d")
+    tickers_to_fetch = ["SPY", symbol]
+    if sector_etf and sector_etf != symbol:
+        tickers_to_fetch.append(sector_etf)
+
+    with _w.catch_warnings():
+        _w.simplefilter("ignore")
+        raw = yf.download(tickers_to_fetch, start=start, progress=False,
+                          auto_adjust=True, group_by="ticker")
+
+    if raw is None or raw.empty:
+        state["tool_results"]["relative_strength"] = {
+            "symbol": symbol, "error": "Failed to download price data"
+        }
+        return state
+
+    # Extract close prices, handling single-ticker vs multi-ticker shapes
+    def _extract_close(df, ticker):
+        try:
+            if isinstance(df.columns, pd.MultiIndex):
+                series = df[(ticker, "Close")].dropna()
+            else:
+                series = df["Close"].dropna()
+            return series.squeeze()
+        except (KeyError, TypeError):
+            return None
+
+    spy_close = _extract_close(raw, "SPY")
+    stock_close = _extract_close(raw, symbol)
+    sector_close = _extract_close(raw, sector_etf) if sector_etf else None
+
+    if spy_close is None or len(spy_close) < 30:
+        state["tool_results"]["relative_strength"] = {
+            "symbol": symbol, "error": "Insufficient SPY data"
+        }
+        return state
+    if stock_close is None or len(stock_close) < 30:
+        state["tool_results"]["relative_strength"] = {
+            "symbol": symbol, "error": f"Insufficient data for {symbol}"
+        }
+        return state
+
+    # ------------------------------------------------------------------
+    # 3. Compute returns over multiple windows
+    # ------------------------------------------------------------------
+    windows = {"21d": 21, "63d": 63, "126d": 126, "252d": 252}
+    vs_spy = {}
+    vs_sector = {}
+
+    for label, w in windows.items():
+        if len(stock_close) >= w and len(spy_close) >= w:
+            stock_ret = float((stock_close.iloc[-1] / stock_close.iloc[-w]) - 1)
+            spy_ret = float((spy_close.iloc[-1] / spy_close.iloc[-w]) - 1)
+            excess = stock_ret - spy_ret
+            vs_spy[label] = {
+                "stock_return": round(stock_ret * 100, 2),
+                "spy_return": round(spy_ret * 100, 2),
+                "excess_return": round(excess * 100, 2),
+            }
+
+            if sector_close is not None and len(sector_close) >= w:
+                sec_ret = float((sector_close.iloc[-1] / sector_close.iloc[-w]) - 1)
+                sec_excess = stock_ret - sec_ret
+                vs_sector[label] = {
+                    "sector_return": round(sec_ret * 100, 2),
+                    "excess_vs_sector": round(sec_excess * 100, 2),
+                }
+
+    if not vs_spy:
+        state["tool_results"]["relative_strength"] = {
+            "symbol": symbol, "error": "Not enough overlapping data for RS calculation"
+        }
+        return state
+
+    # ------------------------------------------------------------------
+    # 4. Composite RS score (weighted: 252d=40%, 126d=30%, 63d=20%, 21d=10%)
+    # ------------------------------------------------------------------
+    weights = {"252d": 0.40, "126d": 0.30, "63d": 0.20, "21d": 0.10}
+    weighted_excess = 0.0
+    total_weight = 0.0
+    for label, w in weights.items():
+        if label in vs_spy:
+            weighted_excess += vs_spy[label]["excess_return"] * w
+            total_weight += w
+    composite_rs = round(weighted_excess / total_weight, 2) if total_weight > 0 else None
+
+    # ------------------------------------------------------------------
+    # 5. RS percentile rank (using 63d excess return vs SPY)
+    #    Simplified: classify into buckets by excess return magnitude
+    # ------------------------------------------------------------------
+    if "63d" in vs_spy:
+        excess_63 = vs_spy["63d"]["excess_return"]
+        if excess_63 > 20:
+            rs_rank_label = "top-tier leader (RS > 20%)"
+        elif excess_63 > 10:
+            rs_rank_label = "strong leader (RS 10-20%)"
+        elif excess_63 > 3:
+            rs_rank_label = "mild outperformer (RS 3-10%)"
+        elif excess_63 > -3:
+            rs_rank_label = "in-line with market (RS ±3%)"
+        elif excess_63 > -10:
+            rs_rank_label = "mild underperformer (RS -3 to -10%)"
+        elif excess_63 > -20:
+            rs_rank_label = "laggard (RS -10 to -20%)"
+        else:
+            rs_rank_label = "severe laggard (RS < -20%)"
+    else:
+        excess_63 = None
+        rs_rank_label = "insufficient data for 63d ranking"
+
+    # ------------------------------------------------------------------
+    # 6. Trend: is RS improving or deteriorating?
+    # ------------------------------------------------------------------
+    if "21d" in vs_spy and "63d" in vs_spy:
+        short_excess = vs_spy["21d"]["excess_return"]
+        med_excess = vs_spy["63d"]["excess_return"]
+        # Normalise 21d to quarterly scale for comparison
+        if short_excess > med_excess + 2:
+            rs_trend = "improving — short-term RS accelerating"
+        elif short_excess < med_excess - 2:
+            rs_trend = "deteriorating — short-term RS decelerating"
+        else:
+            rs_trend = "stable — RS consistent across timeframes"
+    else:
+        rs_trend = "unknown"
+
+    # ------------------------------------------------------------------
+    # 7. Regime fit guidance
+    # ------------------------------------------------------------------
+    regime_rs_guidance = {}
+    if composite_rs is not None:
+        is_leader = composite_rs > 5
+        is_laggard = composite_rs < -5
+        regime_rs_guidance = {
+            "bull": "ideal — leaders amplify bull moves" if is_leader else
+                    "acceptable but consider stronger names" if not is_laggard else
+                    "poor — laggards tend to underperform even in bulls",
+            "bear": "caution — even leaders sell off in bears, but may recover first" if is_leader else
+                    "avoid — laggards fall hardest in bear markets" if is_laggard else
+                    "neutral",
+            "transition": "promising — leaders with rising RS often lead recoveries" if is_leader and rs_trend.startswith("improving") else
+                          "wait for confirmation" if not is_laggard else
+                          "avoid — laggards rarely lead turns",
+        }
+
+    result = {
+        "symbol": symbol,
+        "sector_etf": sector_etf or "unknown",
+        "vs_spy": vs_spy,
+        "vs_sector": vs_sector if vs_sector else None,
+        "composite_rs_score": composite_rs,
+        "rs_rank_label": rs_rank_label,
+        "rs_trend": rs_trend,
+        "regime_rs_guidance": regime_rs_guidance,
+    }
+    state["tool_results"]["relative_strength"] = result
+    return state
+
+
+register_tool({
+    "name": "relative_strength",
+    "description": (
+        "Compute a stock's RELATIVE STRENGTH vs SPY and its sector ETF across "
+        "multiple timeframes (21d, 63d, 126d, 252d). Identifies market leaders "
+        "and laggards — critical for stock selection alongside regime + beta."
+        "\n\nReturns:"
+        "\n• vs_spy: Excess return over SPY at each timeframe"
+        "\n• vs_sector: Excess return over sector ETF (if resolved)"
+        "\n• composite_rs_score: Weighted RS score (252d=40%, 126d=30%, 63d=20%, 21d=10%)"
+        "\n• rs_rank_label: Qualitative ranking (top-tier leader → severe laggard)"
+        "\n• rs_trend: Improving / deteriorating / stable"
+        "\n• regime_rs_guidance: Whether this stock's RS fits the current regime"
+        "\n\nStrategy: In BULL regimes, buy leaders (composite RS > 5). "
+        "In BEAR regimes, avoid laggards (they fall hardest). "
+        "Rising RS in a transition often signals early recovery leadership."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "symbol": {
+                "type": "string",
+                "description": "The stock ticker to compute relative strength for."
+            },
+        },
+        "required": ["symbol"]
+    },
+    "fn": relative_strength_tool_fn,
+})
+
+
+# =============================================================================
+# Earnings Proximity Tool (Catalyst Awareness)
+# =============================================================================
+# Flags upcoming earnings dates so the agent can adjust position sizing
+# and warn the user about binary event risk.
+# Uses Polygon's reference/tickers endpoint for next earnings date.
+
+def earnings_proximity_tool_fn(state: dict, args: dict) -> dict:
+    """
+    Check distance to next and last earnings date for risk awareness.
+    """
+    if "tool_results" not in state:
+        state["tool_results"] = {}
+
+    symbol = args.get("symbol", "").upper()
+    if not symbol:
+        state["tool_results"]["earnings_proximity"] = {"error": "No symbol provided"}
+        return state
+
+    import pandas as pd
+    from datetime import datetime, timedelta
+
+    # Try yfinance first (more reliable for earnings dates)
+    next_earnings_date = None
+    last_earnings_date = None
+    source = None
+
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(symbol)
+        cal = ticker.calendar
+        if cal is not None:
+            # yfinance calendar returns dict with datetime.date values
+            if isinstance(cal, dict):
+                ed = cal.get("Earnings Date")
+                if ed:
+                    if isinstance(ed, list) and len(ed) > 0:
+                        next_earnings_date = pd.Timestamp(ed[0])
+                    else:
+                        next_earnings_date = pd.Timestamp(ed)
+            elif hasattr(cal, "iloc"):
+                # DataFrame format (older yfinance)
+                if "Earnings Date" in cal.columns:
+                    next_earnings_date = pd.Timestamp(cal["Earnings Date"].iloc[0])
+                elif len(cal.columns) > 0:
+                    next_earnings_date = pd.Timestamp(cal.iloc[0, 0])
+
+        # Get last earnings from earnings_dates (more complete history)
+        try:
+            edates = ticker.earnings_dates
+            if edates is not None and len(edates) > 0:
+                now_tz = pd.Timestamp.now(tz="UTC") if edates.index.tz else pd.Timestamp.now()
+                past = edates.index[edates.index <= now_tz]
+                future = edates.index[edates.index > now_tz]
+                if len(past) > 0:
+                    last_earnings_date = pd.Timestamp(past[0])  # Most recent past
+                if len(future) > 0 and next_earnings_date is None:
+                    next_earnings_date = pd.Timestamp(future[-1])  # Soonest future
+        except Exception:
+            pass
+
+        source = "yfinance"
+    except Exception:
+        pass
+
+    # Fallback: check polygon_earnings in state for last reported date
+    if last_earnings_date is None:
+        poly_earnings = state.get("tool_results", {}).get("polygon_earnings")
+        if poly_earnings and not poly_earnings.get("error"):
+            end_date = poly_earnings.get("latest_quarter_end")
+            if end_date:
+                try:
+                    last_earnings_date = pd.Timestamp(end_date)
+                    if source is None:
+                        source = "polygon_earnings"
+                except Exception:
+                    pass
+
+    now = pd.Timestamp.now()
+
+    # ------------------------------------------------------------------
+    # Compute days-to-earnings and risk classification
+    # ------------------------------------------------------------------
+    days_to_next = None
+    days_since_last = None
+    earnings_risk = "unknown"
+    guidance = ""
+
+    if next_earnings_date is not None:
+        # Strip timezone if present
+        if next_earnings_date.tz is not None:
+            next_earnings_date = next_earnings_date.tz_localize(None)
+        days_to_next = (next_earnings_date - now).days
+
+        if days_to_next < 0:
+            # Date is in the past — earnings already happened, yfinance stale
+            days_to_next = None
+        elif days_to_next <= 3:
+            earnings_risk = "IMMINENT"
+            guidance = (
+                "Earnings within 3 days — binary event risk is EXTREME. "
+                "Reduce position to 25-50% of normal or avoid entry. "
+                "Post-earnings gap risk can exceed stop-loss levels."
+            )
+        elif days_to_next <= 7:
+            earnings_risk = "HIGH"
+            guidance = (
+                "Earnings within 1 week — elevated event risk. "
+                "Reduce position by 30-50% or set tight stops. "
+                "Consider waiting until after the report."
+            )
+        elif days_to_next <= 14:
+            earnings_risk = "MODERATE"
+            guidance = (
+                "Earnings within 2 weeks — be aware of rising implied vol. "
+                "Normal sizing OK but have an exit plan before the report."
+            )
+        elif days_to_next <= 30:
+            earnings_risk = "LOW"
+            guidance = (
+                "Earnings 2-4 weeks away — minimal event risk for now. "
+                "Swing trades can proceed normally but monitor as date approaches."
+            )
+        else:
+            earnings_risk = "NONE"
+            guidance = "Earnings date well into the future — no event risk concern."
+
+    if last_earnings_date is not None:
+        if last_earnings_date.tz is not None:
+            last_earnings_date = last_earnings_date.tz_localize(None)
+        days_since_last = (now - last_earnings_date).days
+
+    # Post-earnings drift note
+    post_earnings_note = ""
+    if days_since_last is not None and days_since_last <= 5:
+        post_earnings_note = (
+            "Earnings released within the last 5 days — post-earnings drift "
+            "is active. Positive surprise + momentum = continuation likely. "
+            "Negative surprise = beware of further selling."
+        )
+
+    result = {
+        "symbol": symbol,
+        "next_earnings_date": str(next_earnings_date.date()) if next_earnings_date and days_to_next is not None else None,
+        "days_to_next_earnings": days_to_next,
+        "last_earnings_date": str(last_earnings_date.date()) if last_earnings_date else None,
+        "days_since_last_earnings": days_since_last,
+        "earnings_risk": earnings_risk,
+        "guidance": guidance,
+        "post_earnings_note": post_earnings_note,
+        "source": source or "none",
+    }
+    state["tool_results"]["earnings_proximity"] = result
+    return state
+
+
+register_tool({
+    "name": "earnings_proximity",
+    "description": (
+        "Check how close the next EARNINGS DATE is for a stock. "
+        "Flags binary event risk so the agent can adjust position sizing "
+        "or recommend waiting until after the report."
+        "\n\nReturns:"
+        "\n• next_earnings_date: Date of next expected earnings release"
+        "\n• days_to_next_earnings: Trading days until earnings"
+        "\n• earnings_risk: IMMINENT (<3d) / HIGH (<7d) / MODERATE (<14d) / LOW (<30d) / NONE"
+        "\n• guidance: Actionable position sizing recommendation"
+        "\n• last_earnings_date + days_since: For post-earnings drift awareness"
+        "\n• post_earnings_note: If earnings just happened, drift guidance"
+        "\n\nUSE THIS before any swing trade to avoid getting caught by "
+        "earnings gaps that can blow through stop-loss levels."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "symbol": {
+                "type": "string",
+                "description": "The stock ticker to check earnings date for."
+            },
+        },
+        "required": ["symbol"]
+    },
+    "fn": earnings_proximity_tool_fn,
+})
+
+
+# =============================================================================
 # Volatility Prediction Tool (Early Warning System)
 # =============================================================================
 
