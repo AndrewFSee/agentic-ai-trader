@@ -876,6 +876,47 @@ def _format_bocpd_regime(regime_result: Dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _format_stock_beta(beta_result: Dict[str, Any] | None) -> str:
+    """Format stock beta + R² results for the decision LLM."""
+    if not beta_result:
+        return "Stock beta analysis not available."
+
+    if beta_result.get("error"):
+        return f"Stock beta: {beta_result['error']}"
+
+    symbol = beta_result.get("symbol", "N/A")
+    window = beta_result.get("window", 60)
+    current_beta = beta_result.get("current_beta", "N/A")
+    beta_label = beta_result.get("beta_label", "")
+    current_r2 = beta_result.get("current_r2", "N/A")
+    r2_label = beta_result.get("r2_label", "")
+    full_beta = beta_result.get("full_period_beta", "N/A")
+    full_r2 = beta_result.get("full_period_r2", "N/A")
+    beta_range = beta_result.get("beta_range", "N/A")
+    beta_trend = beta_result.get("beta_trend", "unknown")
+    beta_cv = beta_result.get("beta_stability_cv")
+    stability = beta_result.get("stability_label", "")
+    guidance = beta_result.get("regime_beta_guidance", {})
+
+    lines = [f"Stock Beta Analysis for {symbol} (vs SPY, {window}-day rolling):"]
+    lines.append(f"  Current Beta: {current_beta} — {beta_label}")
+    lines.append(f"  Current R²: {current_r2} — {r2_label}")
+    lines.append(f"  Full-Period Beta: {full_beta}  |  Full-Period R²: {full_r2}")
+    lines.append(f"  Rolling Beta Range: {beta_range}  |  Trend: {beta_trend}")
+    if beta_cv is not None:
+        lines.append(f"  Beta Stability (CV): {beta_cv} — {stability}")
+    else:
+        lines.append(f"  Beta Stability: {stability}")
+
+    lines.append("  Regime-Conditioned Beta Guidance:")
+    for regime, info in guidance.items():
+        pref = info.get("preferred_beta", "")
+        fit = info.get("stock_fit", "")
+        lines.append(f"    {regime.upper():20s} preferred {pref}  →  {symbol} is {fit}")
+
+    return "\n".join(lines)
+
+
 def _format_regime_wasserstein(wass_result: Dict[str, Any] | None) -> str:
     """Format Wasserstein regime detection results for the decision LLM."""
     if not wass_result:
@@ -1069,6 +1110,11 @@ def analyze_trade_agent(
     has_bocpd_regime = bocpd_regime_result and not bocpd_regime_result.get("error")
     bocpd_regime_text = _format_bocpd_regime(bocpd_regime_result) if has_bocpd_regime else ""
 
+    # Format stock beta if available
+    stock_beta_result = tool_results.get("stock_beta")
+    has_stock_beta = stock_beta_result and not stock_beta_result.get("error")
+    stock_beta_text = _format_stock_beta(stock_beta_result) if has_stock_beta else ""
+
     has_wasserstein = regime_wasserstein_result and not regime_wasserstein_result.get("error")
     has_hmm = regime_hmm_result and not regime_hmm_result.get("error")
     has_consensus = regime_consensus_result and not regime_consensus_result.get("error")
@@ -1099,6 +1145,7 @@ You MUST base all conclusions on:
 - the provided EARNINGS TOPIC SIGNAL (if available — this is the highest-alpha sentiment feature),
 - the provided REGIME DETECTION results (Wasserstein volatility-based and/or HMM trend-based),
 - the provided BOCPD MARKET REGIME (bull/bear/transition/crisis/consolidation from Bayesian changepoint detection),
+- the provided STOCK BETA vs SPY (rolling beta, R², and regime-conditioned beta targeting guidance, if available),
 - the provided MARKET RISK ASSESSMENT (ML-based drawdown probability + forward volatility, if available),
 - and the provided ML MODEL PREDICTIONS (if available).
 
@@ -1109,6 +1156,7 @@ Use the books to justify how you interpret:
 - sentiment and narrative,
 - MARKET RISK ASSESSMENT (drawdown probability and forward volatility),
 - BOCPD MARKET REGIME (what kind of market are we in — bull, bear, transition, crisis, consolidation),
+- STOCK BETA vs SPY (is this stock's beta appropriate for the current regime?),
 - REGIME CLASSIFICATION (volatility regimes and trend regimes),
 - ML MODEL PREDICTIONS (consensus and confidence levels),
 - and how you construct risk management and sizing.
@@ -1239,6 +1287,14 @@ BOCPD MARKET REGIME (Bayesian Changepoint Detection)
 {bocpd_regime_text}
 """)
 
+    # Add stock beta section if available
+    if has_stock_beta:
+        user_prompt_parts.append(f"""
+STOCK BETA vs SPY (Regime-Conditioned Beta Targeting)
+------------------------------------------------------
+{stock_beta_text}
+""")
+
     # Only add legacy regime sections if data is available
     if has_wasserstein or has_hmm or has_consensus:
         regime_section = "\nREGIME DETECTION RESULTS\n------------------------\n"
@@ -1327,6 +1383,25 @@ Using ONLY the information above:
      * CONSOLIDATION: range-bound, mean-reversion may work with tight limits.
    - Check recent regime transitions — has the regime been changing frequently?
    - Combine with market_risk: regime gives CONTEXT, market_risk gives SIZING.
+"""
+        next_section += 1
+
+    # Add stock beta analysis section
+    if has_stock_beta:
+        user_prompt += f"""
+{next_section}. STOCK BETA & REGIME FIT:
+   - Report the stock's current beta and R² vs SPY.
+   - R² determines how relevant the market regime is for this stock:
+     * R² > 0.6: strongly market-driven — regime signal very relevant for sizing.
+     * R² 0.3–0.6: moderately market-driven — regime signal provides useful context.
+     * R² < 0.3: idiosyncratic — stock moves independently, regime signal less actionable.
+   - Cross-reference beta with the BOCPD regime (if available):
+     * Use the regime_beta_guidance table to assess whether this stock FITS the current regime.
+     * A "good fit" means the stock's beta is appropriate for the regime's risk profile.
+     * A "poor fit" means the stock may amplify losses (high beta in bear) or underperform (low beta in bull).
+   - Check beta stability: unstable beta means the stock's market sensitivity shifts, reducing confidence.
+   - Check beta trend: rising beta in a deteriorating regime is a warning sign.
+   - Combine with position sizing: in bear/crisis regimes with a high-beta stock, reduce size further.
 """
         next_section += 1
 

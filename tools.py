@@ -1499,6 +1499,260 @@ if _BOCPD_REGIME_AVAILABLE:
 
 
 # =============================================================================
+# Stock Beta Tool (Regime-Conditioned Beta Targeting)
+# =============================================================================
+# Computes rolling beta + R² of a stock against SPY so the decision agent
+# can combine market regime (from BOCPD) with a stock's market sensitivity.
+# High-beta in bull regimes amplifies upside; low-beta in bear preserves capital.
+
+def stock_beta_tool_fn(state: dict, args: dict) -> dict:
+    """
+    Compute rolling beta, R², and regime-appropriate guidance for a stock vs SPY.
+    """
+    import warnings as _w
+    if "tool_results" not in state:
+        state["tool_results"] = {}
+
+    symbol = args.get("symbol", "").upper()
+    window = int(args.get("window", 60))
+
+    if not symbol:
+        state["tool_results"]["stock_beta"] = {"error": "No symbol provided"}
+        return state
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        state["tool_results"]["stock_beta"] = {
+            "symbol": symbol,
+            "error": "yfinance not installed — required for stock beta"
+        }
+        return state
+
+    import numpy as np
+    import pandas as pd
+
+    # Need enough history for rolling window + warm-up
+    lookback_days = max(window * 4, 300)
+    start = (pd.Timestamp.now() - pd.Timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+
+    with _w.catch_warnings():
+        _w.simplefilter("ignore")
+        spy = yf.download("SPY", start=start, progress=False, auto_adjust=True)
+        if symbol == "SPY":
+            stock = spy.copy()
+        else:
+            stock = yf.download(symbol, start=start, progress=False, auto_adjust=True)
+
+    # Flatten multi-level columns (yfinance >= 0.2.31)
+    for df in [spy, stock]:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+    if spy is None or len(spy) < window + 20:
+        state["tool_results"]["stock_beta"] = {
+            "symbol": symbol, "error": "Insufficient SPY data"
+        }
+        return state
+    if stock is None or len(stock) < window + 20:
+        state["tool_results"]["stock_beta"] = {
+            "symbol": symbol, "error": f"Insufficient data for {symbol}"
+        }
+        return state
+
+    # Align dates and compute daily returns
+    spy_close = spy["Close"].squeeze()
+    stock_close = stock["Close"].squeeze()
+    combined = pd.DataFrame({
+        "spy": spy_close, "stock": stock_close
+    }).dropna()
+    combined["spy_ret"] = combined["spy"].pct_change()
+    combined["stock_ret"] = combined["stock"].pct_change()
+    combined = combined.dropna()
+
+    if len(combined) < window + 5:
+        state["tool_results"]["stock_beta"] = {
+            "symbol": symbol,
+            "error": f"Only {len(combined)} overlapping bars — need at least {window + 5}"
+        }
+        return state
+
+    # ---- Rolling beta + R² ----
+    spy_ret = combined["spy_ret"]
+    stock_ret = combined["stock_ret"]
+
+    rolling_cov = stock_ret.rolling(window).cov(spy_ret)
+    rolling_var = spy_ret.rolling(window).var()
+    rolling_beta = (rolling_cov / rolling_var).dropna()
+
+    rolling_corr = stock_ret.rolling(window).corr(spy_ret).dropna()
+    rolling_r2 = rolling_corr ** 2
+
+    if len(rolling_beta) == 0:
+        state["tool_results"]["stock_beta"] = {
+            "symbol": symbol, "error": "Rolling beta computation returned empty"
+        }
+        return state
+
+    current_beta = float(rolling_beta.iloc[-1])
+    current_r2 = float(rolling_r2.iloc[-1])
+
+    # Full-period (OLS) beta for reference
+    full_cov = stock_ret.cov(spy_ret)
+    full_var = spy_ret.var()
+    full_beta = float(full_cov / full_var) if full_var > 0 else float("nan")
+    full_corr = stock_ret.corr(spy_ret)
+    full_r2 = float(full_corr ** 2)
+
+    # Beta stability: coefficient of variation of rolling betas
+    beta_mean = float(rolling_beta.mean())
+    beta_std = float(rolling_beta.std())
+    beta_cv = abs(beta_std / beta_mean) if abs(beta_mean) > 0.01 else float("nan")
+    beta_min = float(rolling_beta.min())
+    beta_max = float(rolling_beta.max())
+
+    # Recent trend: is beta rising or falling?
+    if len(rolling_beta) >= 20:
+        recent_beta_mean = float(rolling_beta.iloc[-20:].mean())
+        older_beta_mean = float(rolling_beta.iloc[-40:-20].mean()) if len(rolling_beta) >= 40 else beta_mean
+        beta_trend = "rising" if recent_beta_mean > older_beta_mean + 0.05 else \
+                     "falling" if recent_beta_mean < older_beta_mean - 0.05 else "stable"
+    else:
+        recent_beta_mean = current_beta
+        beta_trend = "unknown"
+
+    # ---- Interpret beta ----
+    if current_beta >= 1.5:
+        beta_label = "very high beta (aggressive)"
+    elif current_beta >= 1.2:
+        beta_label = "high beta (growth/momentum)"
+    elif current_beta >= 0.8:
+        beta_label = "market beta (broad market)"
+    elif current_beta >= 0.5:
+        beta_label = "low beta (defensive)"
+    elif current_beta >= 0.0:
+        beta_label = "very low beta (bond-proxy / utility)"
+    else:
+        beta_label = "negative beta (hedge / inverse)"
+
+    # R² interpretation
+    if current_r2 >= 0.6:
+        r2_label = "strongly market-driven — regime signal very relevant"
+    elif current_r2 >= 0.3:
+        r2_label = "moderately market-driven — regime signal somewhat relevant"
+    elif current_r2 >= 0.1:
+        r2_label = "weakly market-driven — regime signal has limited relevance"
+    else:
+        r2_label = "idiosyncratic — regime signal mostly irrelevant, stock moves on its own"
+
+    # Stability interpretation
+    if beta_cv is not None and not np.isnan(beta_cv):
+        if beta_cv < 0.15:
+            stability_label = "very stable beta"
+        elif beta_cv < 0.30:
+            stability_label = "moderately stable beta"
+        elif beta_cv < 0.50:
+            stability_label = "unstable beta — sensitivity shifts"
+        else:
+            stability_label = "highly unstable beta — unreliable for regime targeting"
+    else:
+        stability_label = "insufficient data for stability assessment"
+
+    # ---- Regime-conditioned guidance ----
+    regime_guidance = {
+        "bull": {
+            "preferred_beta": "1.2+ (amplify upside with high-beta names)",
+            "stock_fit": "good fit" if current_beta >= 1.2 else
+                         "neutral" if current_beta >= 0.8 else "poor fit — too defensive for bull"
+        },
+        "bull_transition": {
+            "preferred_beta": "0.8–1.2 (market beta, balanced exposure)",
+            "stock_fit": "good fit" if 0.8 <= current_beta <= 1.2 else
+                         "acceptable" if current_beta >= 0.5 else "caution — beta mismatch"
+        },
+        "consolidation": {
+            "preferred_beta": "0.6–1.0 (neutral to slightly defensive)",
+            "stock_fit": "good fit" if 0.6 <= current_beta <= 1.0 else
+                         "acceptable" if current_beta <= 1.2 else "caution — too aggressive for range-bound"
+        },
+        "bear_transition": {
+            "preferred_beta": "0.3–0.8 (defensive, limit drawdown)",
+            "stock_fit": "good fit" if 0.3 <= current_beta <= 0.8 else
+                         "acceptable" if current_beta <= 1.0 else "poor fit — too aggressive for weakening market"
+        },
+        "bear": {
+            "preferred_beta": "0–0.5 or cash (capital preservation)",
+            "stock_fit": "good fit" if current_beta <= 0.5 else
+                         "caution" if current_beta <= 0.8 else "poor fit — high beta in bear = amplified losses"
+        },
+        "crisis": {
+            "preferred_beta": "0 (cash) or negative beta (hedges)",
+            "stock_fit": "good fit" if current_beta <= 0.2 else
+                         "poor fit — almost all equities lose in crisis"
+        },
+    }
+
+    result = {
+        "symbol": symbol,
+        "window": window,
+        "current_beta": round(current_beta, 3),
+        "beta_label": beta_label,
+        "current_r2": round(current_r2, 3),
+        "r2_label": r2_label,
+        "full_period_beta": round(full_beta, 3),
+        "full_period_r2": round(full_r2, 3),
+        "beta_range": f"{beta_min:.2f} to {beta_max:.2f}",
+        "beta_trend": beta_trend,
+        "beta_stability_cv": round(beta_cv, 3) if not np.isnan(beta_cv) else None,
+        "stability_label": stability_label,
+        "regime_beta_guidance": regime_guidance,
+        "data_points": len(combined),
+    }
+    state["tool_results"]["stock_beta"] = result
+    return state
+
+
+register_tool({
+    "name": "stock_beta",
+    "description": (
+        "Compute a stock's rolling BETA and R² against SPY for regime-conditioned "
+        "beta targeting. Combines with bocpd_regime to select stocks appropriate "
+        "for the current market environment."
+        "\n\nReturns:"
+        "\n• current_beta: Rolling {window}-day beta vs SPY"
+        "\n• beta_label: Interpretation (very high / high / market / low / very low / negative)"
+        "\n• current_r2: How much of the stock's variance is explained by SPY"
+        "\n• r2_label: Whether regime signal is relevant for this stock"
+        "\n• full_period_beta / full_period_r2: Longer-term reference values"
+        "\n• beta_range: Min–max over the rolling window history"
+        "\n• beta_trend: Rising / falling / stable"
+        "\n• beta_stability_cv: Coefficient of variation (lower = more stable)"
+        "\n• regime_beta_guidance: For each BOCPD regime, the preferred beta range "
+        "and whether this stock fits"
+        "\n\nStrategy: In BULL regimes, prefer beta 1.2+ to amplify upside. "
+        "In BEAR regimes, prefer beta <0.5 or cash. In TRANSITION, stay near "
+        "market beta (0.8–1.2). Low R² means the stock is idiosyncratic and "
+        "regime signal matters less."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "symbol": {
+                "type": "string",
+                "description": "The stock ticker to compute beta for."
+            },
+            "window": {
+                "type": "integer",
+                "description": "Rolling window in trading days (default 60)."
+            },
+        },
+        "required": ["symbol"]
+    },
+    "fn": stock_beta_tool_fn,
+})
+
+
+# =============================================================================
 # Volatility Prediction Tool (Early Warning System)
 # =============================================================================
 

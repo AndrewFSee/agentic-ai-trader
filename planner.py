@@ -73,6 +73,14 @@ CORE MARKET DATA TOOLS
   - Calculate Bollinger Bands from price data (no API call).
   - Use for overbought/oversold conditions and volatility analysis.
 
+- stock_beta
+  - Compute a stock's rolling beta and R² against SPY.
+  - Use to assess whether a stock's market sensitivity fits the current BOCPD regime.
+  - High beta (1.2+) amplifies upside in BULL regimes but amplifies losses in BEAR.
+  - Low beta (<0.5) is defensive but underperforms in strong trends.
+  - R² tells you how market-driven the stock is (low R² = regime signal less relevant).
+  - ALWAYS call alongside bocpd_regime for regime-conditioned beta targeting.
+
 - polygon_earnings
   - Use for quarterly earnings data with revenue and EPS growth rates.
   - Shows last 8 quarters with QoQ and YoY growth trends.
@@ -168,6 +176,7 @@ COMBINED USAGE:
 - market_risk tells you HOW DANGEROUS the market is (drawdown probability + forward vol)
 - vol_prediction tells you WHETHER VOL IS ABOUT TO CHANGE (regime transition probability)
 - bocpd_regime tells you WHAT KIND OF MARKET we are in (bull/bear/transition/crisis)
+- stock_beta tells you HOW SENSITIVE this stock is to the market (beta + R²)
 - Together they provide a complete risk management framework
 
 ==============================================================================
@@ -207,11 +216,12 @@ For comprehensive trading analysis, you MUST call:
 2. market_risk (PRIMARY - drawdown probability + forward vol for position sizing)
 3. vol_prediction (PRIMARY - volatility regime transition probabilities)
 4. bocpd_regime (PRIMARY - market regime context: bull/bear/transition/crisis)
-5. polygon_technical_rsi + polygon_technical_macd (momentum/trend)
-6. bollinger_bands (volatility/overbought/oversold)
-7. news_sentiment_finviz_finbert (live catalysts and sentiment)
-8. topic_sentiment_newsdb (deep topic-classified sentiment from news database)
-9. earnings_topic_signal (highest-alpha sentiment — confirming factor)
+5. stock_beta (beta + R² vs SPY for regime-conditioned beta targeting)
+6. polygon_technical_rsi + polygon_technical_macd (momentum/trend)
+7. bollinger_bands (volatility/overbought/oversold)
+8. news_sentiment_finviz_finbert (live catalysts and sentiment)
+9. topic_sentiment_newsdb (deep topic-classified sentiment from news database)
+10. earnings_topic_signal (highest-alpha sentiment — confirming factor)
 
 Optional additions:
 9. polygon_ticker_details (company context)
@@ -251,15 +261,19 @@ Decide which tools to call to best help with this query.
 
 REQUIRED for any trade evaluation:
 - polygon_price_data
-- vix_roc_risk (PRIMARY market timing)
-- vol_prediction (PRIMARY position sizing)
+- market_risk (PRIMARY market timing + position sizing)
+- vol_prediction (PRIMARY volatility regime transitions)
+- bocpd_regime (PRIMARY market regime context)
+- stock_beta (beta + R² for regime-conditioned sizing)
 
 Examples of good behavior:
 
 1. For "Is NVDA a good buy right now for a swing trade?":
   - polygon_price_data
-  - vix_roc_risk
+  - market_risk
   - vol_prediction
+  - bocpd_regime
+  - stock_beta
   - polygon_technical_rsi
   - polygon_technical_macd
   - bollinger_bands
@@ -267,8 +281,10 @@ Examples of good behavior:
 
 2. For "Is MSFT a good long-term investment?":
   - polygon_price_data
-  - vix_roc_risk
+  - market_risk
   - vol_prediction
+  - bocpd_regime
+  - stock_beta
   - polygon_ticker_details
   - polygon_earnings
   - polygon_dividends
@@ -276,8 +292,10 @@ Examples of good behavior:
 
 3. For "Should I exit my SPY position?":
   - polygon_price_data
-  - vix_roc_risk
+  - market_risk
   - vol_prediction
+  - bocpd_regime
+  - stock_beta
   - polygon_technical_rsi
   - polygon_technical_macd
 
