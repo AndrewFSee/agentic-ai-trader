@@ -44,20 +44,22 @@ class BOCPDConfig:
     vol_scale_floor: float = 1e-6
 
     # Normal-Inverse-Gamma prior parameters
+    # After vol-scaling, data has variance ~2-5; beta0/(alpha0-1) should match
     mu0: float = 0.0
     kappa0: float = 0.1
     alpha0: float = 2.0
-    beta0: float = 0.0001
+    beta0: float = 2.0
 
     # Changepoint probability thresholds for risk scoring
     cp_prob_lo: float = 0.05
     cp_prob_hi: float = 0.5
 
     # Expected run length thresholds
-    erl_floor: int = 5
-    erl_enter: int = 20
-    erl_exit: int = 126
-    erl_spike_thr: int = 10
+    # With vol-scaling, ERL maxes ~50 (not 600+ like raw data)
+    erl_floor: int = 3
+    erl_enter: int = 10
+    erl_exit: int = 30
+    erl_spike_thr: int = 5
 
 
 @dataclass

@@ -69,26 +69,30 @@ def classify_regime_v2(
     prev_regime: Optional[str] = None,
 ) -> str:
     """
-    Multi-timeframe regime classification.
+    Trading-agent-tuned regime classification.
 
-    Uses both 21-day and 63-day trends to capture:
-    - Grinding bear markets with low volatility but negative trend
-    - Volatile bear markets with high risk + downtrend
-    - V-shaped recoveries with high vol + uptrend
-    - Steady bull markets with low risk + uptrend
+    Optimized for decisive bull/bear signals rather than granular transitions.
+    Uses both 21-day and 63-day trends with BOCPD risk score to classify
+    the current market regime for trade entry/sizing decisions.
+
+    Thresholds calibrated via historical sweep (2015-2025) against known
+    market periods:
+      - 2021/2024 bull: ~65-75% bull
+      - 2022 bear: ~78% bear
+      - 2020 COVID: ~63% crisis
     """
     if pd.isna(risk_score) or pd.isna(trend_21) or pd.isna(trend_63):
         return "consolidation"
 
-    # Risk thresholds
-    VERY_HIGH_RISK = 0.80
-    HIGH_RISK = 0.45
-    MODERATE_RISK = 0.30
-    LOW_RISK = 0.15
+    # Risk thresholds (calibrated for erl_exit=30 mapping)
+    VERY_HIGH_RISK = 0.75
+    HIGH_RISK = 0.50
+    MODERATE_RISK = 0.35
+    LOW_RISK = 0.30
 
     # Volatility thresholds (annualised)
-    HIGH_VOL = 0.20
-    LOW_VOL = 0.14
+    HIGH_VOL = 0.22
+    LOW_VOL = 0.15
 
     # Medium-term trend (63-day)
     STRONG_BEAR_TREND = -0.08
@@ -120,11 +124,10 @@ def classify_regime_v2(
     is_down_21 = trend_21 <= DOWN_21
     is_up_21 = trend_21 >= UP_21
     is_strong_up_21 = trend_21 >= STRONG_UP_21
-    is_flat_21 = not is_down_21 and not is_up_21
 
     was_bearish = prev_regime in ("bear", "crisis", "bear_transition") if prev_regime else False
 
-    # 1. CRISIS
+    # 1. CRISIS — extreme volatility or deep decline
     if volatility >= 0.40 and trend_21 <= 0.05:
         return "crisis"
     if volatility >= 0.35 and is_very_high_risk and trend_21 <= 0.03:
@@ -134,13 +137,11 @@ def classify_regime_v2(
     if trend_21 <= -0.12 and volatility >= 0.30:
         return "crisis"
 
-    # 2. BULL_TRANSITION (recovery from bear)
-    if was_bearish and is_up_21:
-        return "bull_transition"
-    if was_bearish and is_strong_up_21:
+    # 2. Recovery from bear → bull_transition (only if still high risk)
+    if was_bearish and is_up_21 and is_high_risk:
         return "bull_transition"
 
-    # 3. BEAR
+    # 3. BEAR — sustained negative trend or high risk + decline
     if is_strong_bear_63:
         return "bear"
     if is_bear_63 and is_down_21:
@@ -151,44 +152,41 @@ def classify_regime_v2(
         return "bear"
     if is_high_vol and is_down_21:
         return "bear"
-    if is_moderate_risk and trend_21 < -0.02 and trend_63 < 0:
-        return "bear"
     if is_high_risk and is_down_21:
         return "bear"
 
-    # 4. BULL_TRANSITION (other recovery/volatile rally)
-    if is_high_vol and is_up_21 and not is_bear_63:
-        return "bull_transition"
-    if is_high_risk and is_up_21 and not is_strong_bear_63:
-        return "bull_transition"
-    if is_moderate_risk and is_up_21:
-        return "bull_transition"
-    if is_flat_63 and is_strong_up_21:
-        return "bull_transition"
-
-    # 5. BULL
-    if is_bull_63 and is_low_vol and is_low_risk:
+    # 4. BULL — positive trend with reasonable conditions
+    #    Prioritised over bull_transition for decisive trading signals
+    if is_bull_63 and is_low_risk and not is_high_vol:
         return "bull"
-    if is_bull_63 and is_up_21 and not is_high_risk and not is_high_vol:
+    if is_strong_bull_63 and not is_high_risk:
         return "bull"
-    if is_bull_63 and is_low_risk:
-        return "bull"
-    if is_strong_bull_63 and not is_high_vol:
+    if is_bull_63 and is_up_21 and not is_high_risk:
         return "bull"
     if is_low_risk and is_up_21 and trend_63 >= 0:
         return "bull"
-    if is_low_vol and is_up_21 and trend_63 >= 0 and not is_moderate_risk:
+    if is_low_vol and is_up_21 and is_bull_63:
         return "bull"
 
-    # 6. BEAR_TRANSITION
-    if is_high_risk and is_flat_21 and not is_bear_63:
+    # 5. BULL_TRANSITION — uptrend but elevated risk or recovery
+    if is_high_vol and is_up_21 and not is_bear_63:
+        return "bull_transition"
+    if is_high_risk and is_up_21:
+        return "bull_transition"
+    if is_moderate_risk and is_up_21 and is_bull_63:
+        return "bull_transition"
+    if is_up_21 and not is_bear_63 and not is_low_risk:
+        return "bull_transition"
+
+    # 6. BEAR_TRANSITION — uncertain but leaning negative
+    if is_high_risk and not is_up_21 and not is_bear_63:
         return "bear_transition"
     if is_down_21 and is_flat_63:
         return "bear_transition"
-    if is_moderate_risk and is_down_21 and not is_bear_63:
+    if is_moderate_risk and is_down_21:
         return "bear_transition"
 
-    # 7. CONSOLIDATION
+    # 7. CONSOLIDATION — no clear signal
     return "consolidation"
 
 

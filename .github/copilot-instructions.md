@@ -138,9 +138,9 @@ agentic_ai_trader/
 ├── market_risk_model.py        # ML drawdown probability + forward vol
 ├── build_vectorstore.py        # Vector store setup
 ├── models/                     # ML and regime detection models
-│   ├── bocpd_regime/           # BOCPD market regime package (from allocator project)
-│   │   ├── bocpd.py            # Adams & MacKay BOCPD with dynamic hazard
-│   │   ├── labeling.py         # 6-regime classifier (multi-timeframe)
+│   ├── bocpd_regime/           # BOCPD market regime package (tuned for trading agent)
+│   │   ├── bocpd.py            # Adams & MacKay BOCPD with dynamic hazard + vol-scaling
+│   │   ├── labeling.py         # 6-regime classifier (trading-agent-tuned thresholds)
 │   │   ├── detector.py         # High-level detect_current_regime() for tool
 │   │   ├── config.py           # BOCPDConfig + RegimeLabelConfig
 │   │   └── utils.py            # Smoothing, thresholding helpers

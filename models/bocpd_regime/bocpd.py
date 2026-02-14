@@ -166,6 +166,9 @@ def run_bocpd(
         rolling_vol = x_clean.rolling(window=config.vol_scale_window).std()
         rolling_vol = rolling_vol.clip(lower=config.vol_scale_floor)
         x_clean = x_clean / rolling_vol
+        # Drop NaN introduced by rolling window — feeding NaN to the model
+        # corrupts posterior params and causes ERL to collapse to 0 permanently
+        x_clean = x_clean.dropna()
 
     if len(x_clean) == 0:
         raise ValueError("Input series has no valid data after dropping NaN")
