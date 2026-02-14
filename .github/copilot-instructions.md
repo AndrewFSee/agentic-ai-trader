@@ -28,9 +28,12 @@ User Query → RAG Search (trading books) → Planner (selects tools)
   - `bollinger_bands` - Calculated from price data (no API call, instant)
   - `alpha_vantage_fundamentals` - Company overview (PREMIUM ONLY, disabled)
   - `news_sentiment_finviz_finbert` - Scrapes Finviz + runs FinBERT sentiment model
-  - `regime_detection_wasserstein` - Volatility-based regime (low/med/high vol) using paper-faithful Wasserstein k-means
-  - `regime_detection_hmm` - Trend-based regime (bearish/sideways/bullish) with transition probabilities
-  - `regime_consensus_check` - Agreement checker for both regime methods (call after both)
+  - `bocpd_regime` - BOCPD market regime detection (bull/bear/transition/crisis/consolidation) on SPY
+  - `market_risk` - ML-based drawdown probability + forward volatility (isotonic calibration)
+  - `vol_prediction` - Volatility regime transition probabilities
+  - `regime_detection_wasserstein` - DEPRECATED (commented out)
+  - `regime_detection_hmm` - DEPRECATED (commented out)
+  - `regime_consensus_check` - DEPRECATED (commented out)
 
 ### 2. Planner (`planner.py`)
 - **Model**: Uses `gpt-5.1` (configurable via `PLANNER_MODEL`)
@@ -130,12 +133,19 @@ ALPHAVANTAGE_API_KEY=...
 agentic_ai_trader/
 ├── analyze_trade_agent.py      # Main entry point
 ├── planner.py                   # LLM-based tool selection
-├── tools.py                     # Tool registry (724 lines)
+├── tools.py                     # Tool registry
 ├── agent_tools.py              # Tool execution hub
+├── market_risk_model.py        # ML drawdown probability + forward vol
 ├── build_vectorstore.py        # Vector store setup
-├── models/                     # Regime detection models
-│   ├── paper_wasserstein_regime_detection.py
-│   └── rolling_hmm_regime_detection.py
+├── models/                     # ML and regime detection models
+│   ├── bocpd_regime/           # BOCPD market regime package (from allocator project)
+│   │   ├── bocpd.py            # Adams & MacKay BOCPD with dynamic hazard
+│   │   ├── labeling.py         # 6-regime classifier (multi-timeframe)
+│   │   ├── detector.py         # High-level detect_current_regime() for tool
+│   │   ├── config.py           # BOCPDConfig + RegimeLabelConfig
+│   │   └── utils.py            # Smoothing, thresholding helpers
+│   ├── paper_wasserstein_regime_detection.py  # DEPRECATED
+│   └── rolling_hmm_regime_detection.py        # DEPRECATED
 ├── docs/                       # Documentation
 ├── tests/                      # Test scripts
 ├── results/                    # Test outputs
@@ -144,13 +154,13 @@ agentic_ai_trader/
 
 ## Key Files Reference
 - `analyze_trade_agent.py` - Main entry point and orchestration
-- `tools.py` - All market data, sentiment, and regime detection tools (~1430 lines)
-- `planner.py` - LLM-based dynamic tool selection with regime guidance
+- `tools.py` - All market data, sentiment, and regime detection tools
+- `planner.py` - LLM-based dynamic tool selection with regime/risk guidance
 - `agent_tools.py` - Tool execution hub (`run_tools` function)
+- `market_risk_model.py` - Isotonic calibration DD probability + HistGBR vol prediction
 - `build_vectorstore.py` - One-time setup for trading book embeddings
-- `models/paper_wasserstein_regime_detection.py` - Paper-faithful Wasserstein k-means (926 lines)
-- `models/rolling_hmm_regime_detection.py` - Professional rolling HMM (562 lines)
+- `models/bocpd_regime/` - BOCPD market regime package (adapted from regime_aware_portfolio_allocator)
+- `models/paper_wasserstein_regime_detection.py` - DEPRECATED Wasserstein k-means
+- `models/rolling_hmm_regime_detection.py` - DEPRECATED rolling HMM
 - `tests/` - All test and comparison scripts
-- `docs/` - Comprehensive documentation:
-  - `WASSERSTEIN_VS_HMM_VERDICT.md` - Head-to-head comparison results
-  - `REGIME_DETECTION_AGENT_GUIDE.md` - Agent decision framework for regimes
+- `docs/` - Comprehensive documentation

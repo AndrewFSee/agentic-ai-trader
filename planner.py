@@ -104,25 +104,31 @@ PRIMARY RISK MANAGEMENT TOOLS (MUST CALL FOR ANY TRADE EVALUATION)
 
 These two tools are the PRIMARY risk overlay for all trade decisions:
 
-★ vix_roc_risk (REQUIRED - Market Timing)
-  - VIX Rate-of-Change based market timing with automatic asset tier classification.
-  - Walk-forward validated: 15/15 wins on tested assets (2020-2024).
-  - Auto-classifies assets into three tiers:
-    * TIER 1 (Value/Cyclical): SPY, DIA, IWM, XLF, XLE - conservative params
-    * TIER 2 (Growth/Tech ETFs): QQQ, AAPL, AMZN, GOOGL - aggressive params  
-    * TIER 3 (Mega-Cap Tech): NVDA, MSFT, META - ultra-conservative, extreme events only
-  - Returns: tier classification, current_signal ('exit'|'reenter'|'hold'), position_status
+★ market_risk (REQUIRED - Drawdown Probability + Forward Volatility)
+  - ML-based (GradientBoosting) market risk model with walk-forward validation.
+  - Uses 21 VIX + SPY features to predict TWO things:
+    1. P(SPY max drawdown > 3% in next 10 days) — continuous 0.0 to 1.0
+    2. Predicted forward realised volatility (annualised %) — for position sizing
+  - Returns:
+    * drawdown_probability: Continuous probability (not binary)
+    * drawdown_risk_level: LOW / MODERATE / ELEVATED / HIGH / EXTREME
+    * predicted_fwd_vol_pct: Expected annualised vol for next 10 days
+    * current_realized_vol_pct: Current 20-day vol for comparison
+    * vol_trend: RISING / STABLE / FALLING
+    * suggested_position_pct: Recommended size (1.0 = full, 0.2 = minimal)
+    * suggested_stop_multiplier: How much to widen stops (1.0x to 2.0x)
+    * variance_risk_premium: VIX / realised vol ratio (fear gauge)
+    * top_risk_drivers: What features are driving current risk
   - INTERPRETATION:
-    * 'exit' signal = DO NOT ENTER - market stress, wait for re-entry
-    * 'hold' + IN MARKET = Safe to trade normally
-    * 'reenter' signal = VIX calming, safe to re-enter
-  - Performance (2020-2024 out-of-sample):
-    * Tier 1: +39% avg excess return, 7/7 wins
-    * Tier 2: +20% avg excess return, 5/5 wins  
-    * Tier 3: +140% avg excess return, 3/3 wins
+    * drawdown_prob < 0.15: LOW risk — full position, normal stops
+    * drawdown_prob 0.15-0.30: MODERATE — reduce to 85%, widen stops 1.2x
+    * drawdown_prob 0.30-0.50: ELEVATED — reduce to 65%, widen stops 1.4x
+    * drawdown_prob 0.50-0.70: HIGH — reduce to 40%, widen stops 1.7x
+    * drawdown_prob > 0.70: EXTREME — reduce to 20% or skip trade
+  - Risk is MARKET-WIDE (SPY/VIX based). For high-beta stocks, scale up.
 
-★ vol_prediction (REQUIRED - Position Sizing)
-  - Predicts volatility regime transitions for position sizing and risk management.
+★ vol_prediction (REQUIRED - Volatility Regime Transitions)
+  - Predicts volatility regime transitions for additional risk context.
   - Uses VIX-based universal features that work across all equities.
   - Returns:
     * current_regime: 'LOW' or 'HIGH' volatility
@@ -137,18 +143,36 @@ These two tools are the PRIMARY risk overlay for all trade decisions:
     * calm_probability >= 0.5: Vol likely to subside, can add to winners
   - Precision: ~62% at 0.6+ threshold (vs 23% base rate for spikes)
 
+★ bocpd_regime (REQUIRED - Market Regime Context)
+  - Bayesian Online Changepoint Detection (BOCPD) on SPY 21-day returns.
+  - Classifies the current market into one of 6 regimes.
+  - Returns:
+    * current_regime: bull / bear / bull_transition / bear_transition / consolidation / crisis
+    * risk_score: Instability score 0-1 (lower = more stable)
+    * risk_level: LOW / MODERATE / ELEVATED / HIGH
+    * expected_run_length: Days since last changepoint (higher = more stable)
+    * trend_21d / trend_63d: Short and medium-term cumulative returns
+    * volatility_ann: 21-day annualised volatility
+    * interpretation: Actionable guidance for the regime
+    * recent_regime_changes: Last regime transitions with dates
+  - INTERPRETATION:
+    * BULL: trend-following works, normal position sizing
+    * BEAR: defensive, avoid breakout longs, consider hedging
+    * BULL_TRANSITION: recovery in progress, smaller size, wider stops
+    * BEAR_TRANSITION: weakness starting, reduce exposure, tighten stops
+    * CONSOLIDATION: range-bound, low conviction, tight risk limits
+    * CRISIS: capital preservation, minimal or zero equity exposure
+  - Always runs on SPY (market-wide context), regardless of symbol being evaluated.
+
 COMBINED USAGE:
-- vix_roc_risk tells you IF you should trade (IN/OUT signal)
-- vol_prediction tells you HOW MUCH to bet (position sizing)
-- Together they provide complete risk management framework
+- market_risk tells you HOW DANGEROUS the market is (drawdown probability + forward vol)
+- vol_prediction tells you WHETHER VOL IS ABOUT TO CHANGE (regime transition probability)
+- bocpd_regime tells you WHAT KIND OF MARKET we are in (bull/bear/transition/crisis)
+- Together they provide a complete risk management framework
 
 ==============================================================================
 OPTIONAL TOOLS
 ==============================================================================
-
-- vix_roc_portfolio_risk
-  - Portfolio-wide VIX ROC risk assessment across multiple assets.
-  - Only needed for portfolio-wide checks, not single stock analysis.
 
 - polygon_dividends / polygon_splits
   - Use for corporate actions and dividend information.
@@ -168,9 +192,11 @@ DEPRECATED TOOLS (DO NOT USE)
 
 The following tools have been deprecated as they do not provide reliable alpha:
 - regime_detection_wasserstein (use vol_prediction instead)
-- regime_detection_hmm (use vix_roc_risk instead)
+- regime_detection_hmm (use market_risk instead)
 - regime_consensus_check (deprecated)
 - ml_prediction (deprecated - not reliable for alpha generation)
+- vix_roc_risk (replaced by market_risk — binary signal was uninformative 90%+ of the time)
+- vix_roc_portfolio_risk (deprecated with vix_roc_risk)
 
 ==============================================================================
 TOOL SELECTION GUIDE
@@ -178,13 +204,14 @@ TOOL SELECTION GUIDE
 
 For comprehensive trading analysis, you MUST call:
 1. polygon_price_data (price action, trend, ATR for stops)
-2. vix_roc_risk (PRIMARY - market timing IN/OUT signal)
-3. vol_prediction (PRIMARY - position sizing)
-4. polygon_technical_rsi + polygon_technical_macd (momentum/trend)
-5. bollinger_bands (volatility/overbought/oversold)
-6. news_sentiment_finviz_finbert (live catalysts and sentiment)
-7. topic_sentiment_newsdb (deep topic-classified sentiment from news database)
-8. earnings_topic_signal (highest-alpha sentiment — confirming factor)
+2. market_risk (PRIMARY - drawdown probability + forward vol for position sizing)
+3. vol_prediction (PRIMARY - volatility regime transition probabilities)
+4. bocpd_regime (PRIMARY - market regime context: bull/bear/transition/crisis)
+5. polygon_technical_rsi + polygon_technical_macd (momentum/trend)
+6. bollinger_bands (volatility/overbought/oversold)
+7. news_sentiment_finviz_finbert (live catalysts and sentiment)
+8. topic_sentiment_newsdb (deep topic-classified sentiment from news database)
+9. earnings_topic_signal (highest-alpha sentiment — confirming factor)
 
 Optional additions:
 9. polygon_ticker_details (company context)

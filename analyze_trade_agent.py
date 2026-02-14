@@ -836,6 +836,46 @@ def _format_market_risk(risk_result: Dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _format_bocpd_regime(regime_result: Dict[str, Any] | None) -> str:
+    """Format BOCPD regime detection results for the decision LLM."""
+    if not regime_result:
+        return "BOCPD regime detection not available."
+
+    if regime_result.get("error"):
+        return f"BOCPD regime: {regime_result['error']}"
+
+    current = regime_result.get("current_regime", "unknown")
+    risk_score = regime_result.get("risk_score", "N/A")
+    risk_level = regime_result.get("risk_level", "N/A")
+    erl = regime_result.get("expected_run_length")
+    trend_21 = regime_result.get("trend_21d")
+    trend_63 = regime_result.get("trend_63d")
+    vol_ann = regime_result.get("volatility_ann")
+    interp = regime_result.get("interpretation", "")
+    changes = regime_result.get("recent_regime_changes", [])
+
+    lines = ["BOCPD Market Regime (Bayesian Online Changepoint Detection on SPY):"]
+    lines.append(f"  Current Regime: {current.upper()}")
+    lines.append(f"  Risk Score: {risk_score} ({risk_level})")
+    if erl is not None:
+        stability = "very stable" if erl > 100 else "stable" if erl > 40 else "moderate" if erl > 15 else "unstable"
+        lines.append(f"  Expected Run Length: {erl:.0f} days ({stability})")
+    if trend_21 is not None:
+        lines.append(f"  Trend 21-day: {trend_21:+.2%}")
+    if trend_63 is not None:
+        lines.append(f"  Trend 63-day: {trend_63:+.2%}")
+    if vol_ann is not None:
+        vol_label = "elevated" if vol_ann > 0.20 else "low" if vol_ann < 0.12 else "normal"
+        lines.append(f"  Volatility (ann.): {vol_ann:.1%} ({vol_label})")
+    lines.append(f"  Interpretation: {interp}")
+    if changes:
+        lines.append("  Recent Regime Transitions:")
+        for c in changes[-4:]:
+            lines.append(f"    {c['date']}: → {c['regime']}")
+
+    return "\n".join(lines)
+
+
 def _format_regime_wasserstein(wass_result: Dict[str, Any] | None) -> str:
     """Format Wasserstein regime detection results for the decision LLM."""
     if not wass_result:
@@ -1023,7 +1063,12 @@ def analyze_trade_agent(
     market_risk_result = tool_results.get("market_risk")
     has_market_risk = market_risk_result and not market_risk_result.get("error")
     market_risk_text = _format_market_risk(market_risk_result) if has_market_risk else ""
-    
+
+    # Format BOCPD regime if available
+    bocpd_regime_result = tool_results.get("bocpd_regime")
+    has_bocpd_regime = bocpd_regime_result and not bocpd_regime_result.get("error")
+    bocpd_regime_text = _format_bocpd_regime(bocpd_regime_result) if has_bocpd_regime else ""
+
     has_wasserstein = regime_wasserstein_result and not regime_wasserstein_result.get("error")
     has_hmm = regime_hmm_result and not regime_hmm_result.get("error")
     has_consensus = regime_consensus_result and not regime_consensus_result.get("error")
@@ -1053,6 +1098,7 @@ You MUST base all conclusions on:
 - the provided TOPIC-CLASSIFIED SENTIMENT from the news database (if available),
 - the provided EARNINGS TOPIC SIGNAL (if available — this is the highest-alpha sentiment feature),
 - the provided REGIME DETECTION results (Wasserstein volatility-based and/or HMM trend-based),
+- the provided BOCPD MARKET REGIME (bull/bear/transition/crisis/consolidation from Bayesian changepoint detection),
 - the provided MARKET RISK ASSESSMENT (ML-based drawdown probability + forward volatility, if available),
 - and the provided ML MODEL PREDICTIONS (if available).
 
@@ -1062,6 +1108,7 @@ Use the books to justify how you interpret:
 - company context,
 - sentiment and narrative,
 - MARKET RISK ASSESSMENT (drawdown probability and forward volatility),
+- BOCPD MARKET REGIME (what kind of market are we in — bull, bear, transition, crisis, consolidation),
 - REGIME CLASSIFICATION (volatility regimes and trend regimes),
 - ML MODEL PREDICTIONS (consensus and confidence levels),
 - and how you construct risk management and sizing.
@@ -1082,7 +1129,21 @@ MARKET RISK ASSESSMENT GUIDANCE:
 - ALWAYS use market_risk suggested_position_pct and suggested_stop_multiplier as baseline.
 - For HIGH-BETA stocks, scale the risk assessment UP proportionally.
 
-REGIME DETECTION GUIDANCE:
+BOCPD MARKET REGIME GUIDANCE:
+- BOCPD uses Bayesian Online Changepoint Detection on SPY 21-day returns to classify the market.
+- 6 regimes: BULL, BEAR, BULL_TRANSITION, BEAR_TRANSITION, CONSOLIDATION, CRISIS.
+- Risk score (0-1) reflects regime instability; Expected Run Length (ERL) indicates stability:
+  * ERL > 100 days: very stable regime, trust the classification
+  * ERL 40-100: stable, regime likely to persist
+  * ERL 15-40: moderate stability, watch for transition signals
+  * ERL < 15: unstable, regime may be changing — reduce conviction
+- BULL regime: trend-following works, normal sizing. BEAR regime: defensive, avoid long breakouts.
+- TRANSITION regimes: smaller positions, wider stops, wait for confirmation.
+- CRISIS: capital preservation, minimal or zero equity exposure.
+- The BOCPD regime tells you WHAT KIND of market we are in, complementing market_risk which tells you HOW RISKY it is.
+- Always combine regime context with market_risk position sizing.
+
+REGIME DETECTION GUIDANCE (Legacy — Wasserstein/HMM, if available):
 - Wasserstein detects VOLATILITY regimes (Low/Med/High Vol). Use for position sizing and stop placement.
 - HMM detects TREND regimes (Bearish/Sideways/Bullish). Use for directional bias and transition risks.
 - When both methods AGREE, confidence is HIGH. When they DISAGREE, it signals UNCERTAINTY.
@@ -1169,8 +1230,16 @@ MARKET RISK ASSESSMENT (ML-Based)
 ----------------------------------
 {market_risk_text}
 """)
-    
-    # Only add regime sections if data is available
+
+    # Add BOCPD regime section if available
+    if has_bocpd_regime:
+        user_prompt_parts.append(f"""
+BOCPD MARKET REGIME (Bayesian Changepoint Detection)
+-----------------------------------------------------
+{bocpd_regime_text}
+""")
+
+    # Only add legacy regime sections if data is available
     if has_wasserstein or has_hmm or has_consensus:
         regime_section = "\nREGIME DETECTION RESULTS\n------------------------\n"
         if has_wasserstein:
@@ -1227,7 +1296,7 @@ Using ONLY the information above:
      on valuation and quality where relevant.
 """
     
-    # Add market risk section if available
+    # Add market risk and regime sections dynamically
     next_section = 4
     if has_market_risk:
         user_prompt += f"""
@@ -1242,8 +1311,26 @@ Using ONLY the information above:
    - Check what the top risk drivers are — what features are contributing most to current risk.
 """
         next_section += 1
-    
-    # Add regime analysis section only if regime data is available
+
+    # Add BOCPD regime analysis section
+    if has_bocpd_regime:
+        user_prompt += f"""
+{next_section}. BOCPD MARKET REGIME:
+   - Identify the current BOCPD regime (bull/bear/transition/crisis/consolidation).
+   - Assess regime stability from the Expected Run Length (ERL):
+     * ERL > 100 = very stable, ERL 40-100 = stable, ERL < 15 = unstable/transitioning.
+   - How does the regime affect the trade idea?
+     * BULL: trend-following favoured, normal sizing.
+     * BEAR: defensive, avoid breakout longs, consider hedging.
+     * TRANSITION: smaller positions, wider stops, require extra confirmation.
+     * CRISIS: capital preservation, strongly consider skipping.
+     * CONSOLIDATION: range-bound, mean-reversion may work with tight limits.
+   - Check recent regime transitions — has the regime been changing frequently?
+   - Combine with market_risk: regime gives CONTEXT, market_risk gives SIZING.
+"""
+        next_section += 1
+
+    # Add legacy regime analysis section only if regime data is available
     if has_wasserstein or has_hmm or has_consensus:
         user_prompt += f"""
 {next_section}. REGIME ANALYSIS:
@@ -1318,18 +1405,20 @@ Using ONLY the information above:
     
     ml_guidance = ", ML predictions," if has_ml else ""
     market_risk_guidance = ", market risk assessment," if has_market_risk else ""
+    bocpd_guidance = ", BOCPD market regime" if has_bocpd_regime else ""
     regime_guidance = " and REGIME CLASSIFICATION" if (has_wasserstein or has_hmm) else ""
-    regime_risk_guidance = " ADJUSTED FOR REGIME" if (has_wasserstein or has_hmm) else ""
+    regime_risk_guidance = " ADJUSTED FOR REGIME" if (has_wasserstein or has_hmm or has_bocpd_regime) else ""
     market_risk_adjustment = " AND MARKET RISK" if has_market_risk else ""
     regime_risk_details = "\n   - If regime models disagree, recommend reducing position size or waiting for consensus." if has_consensus else ""
     regime_verdict_note = " (especially if regime models disagree)" if (has_wasserstein or has_hmm) else ""
+    bocpd_verdict_note = " Unfavourable BOCPD regimes (bear/crisis) should lean toward UNCLEAR or NOT ATTRACTIVE." if has_bocpd_regime else ""
     
     user_prompt += f"""
 {next_section}. EDGE ASSESSMENT:
    - Evaluate whether the proposed trade has a reasonable edge according to the books, given:
      - price/technicals,
      - fundamentals,
-     - sentiment{ml_guidance}{market_risk_guidance}{regime_guidance}.
+     - sentiment{ml_guidance}{market_risk_guidance}{bocpd_guidance}{regime_guidance}.
    - If data is missing (e.g., no fundamentals or no news), explicitly factor that into your conclusion.
    - Synthesize ALL inputs: Do price, technicals, ML, regime, and sentiment ALIGN or CONFLICT?
    - Strongest edge when multiple signals confirm each other.
@@ -1354,7 +1443,7 @@ Using ONLY the information above:
    - Provide a verdict in EXACTLY one of these forms (put this on a separate line prefixed with 'VERDICT:'):
      - VERDICT: NOT ATTRACTIVE based on the books and current data
      - VERDICT: UNCLEAR / NEEDS MORE INFORMATION{regime_verdict_note}
-     - VERDICT: ATTRACTIVE IF STRICT RULES ARE FOLLOWED{f'- Your verdict MUST consider the regime analysis - uncertain regimes should lean toward UNCLEAR or NOT ATTRACTIVE.' if (has_wasserstein or has_hmm) else ''}
+     - VERDICT: ATTRACTIVE IF STRICT RULES ARE FOLLOWED{f'- Your verdict MUST consider the regime analysis - uncertain regimes should lean toward UNCLEAR or NOT ATTRACTIVE.' if (has_wasserstein or has_hmm) else ''}{bocpd_verdict_note}
 """
     next_section += 1
     

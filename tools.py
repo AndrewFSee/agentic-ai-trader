@@ -1419,6 +1419,85 @@ except ImportError:
 #         },
 #         "fn": ml_prediction_tool_fn
 #     })
+
+# =============================================================================
+# BOCPD Regime Detection Tool (Bayesian Online Changepoint Detection)
+# =============================================================================
+# Replaces Wasserstein/HMM regime tools with a Bayesian changepoint model
+# that produces 6-regime classification (bull/bear/transition/crisis/consolidation).
+# Runs on SPY to detect market-wide regime for contextual trade decisions.
+
+try:
+    from models.bocpd_regime.detector import detect_current_regime as _bocpd_detect
+    _BOCPD_REGIME_AVAILABLE = True
+except ImportError as e:
+    _BOCPD_REGIME_AVAILABLE = False
+    print(f"Warning: BOCPD regime detection not available: {e}")
+
+
+def bocpd_regime_tool_fn(state: dict, args: dict) -> dict:
+    """
+    Detect current market regime using BOCPD on SPY.
+
+    Returns regime label, risk score, ERL, trends, and actionable interpretation.
+    """
+    if "tool_results" not in state:
+        state["tool_results"] = {}
+
+    if not _BOCPD_REGIME_AVAILABLE:
+        state["tool_results"]["bocpd_regime"] = {
+            "error": "BOCPD regime detection not available (import failed)"
+        }
+        return state
+
+    # Always run on SPY for market regime context
+    symbol = "SPY"
+    try:
+        result = _bocpd_detect(symbol=symbol, lookback_years=3)
+        state["tool_results"]["bocpd_regime"] = result
+    except Exception as e:
+        state["tool_results"]["bocpd_regime"] = {
+            "symbol": symbol,
+            "error": f"BOCPD regime detection failed: {str(e)}"
+        }
+
+    return state
+
+
+if _BOCPD_REGIME_AVAILABLE:
+    register_tool({
+        "name": "bocpd_regime",
+        "description": (
+            "Detect the current MARKET REGIME using Bayesian Online Changepoint Detection (BOCPD) "
+            "on SPY. Provides qualitative market context that complements the quantitative "
+            "market_risk tool."
+            "\n\nReturns:"
+            "\n• current_regime: bull / bear / bull_transition / bear_transition / consolidation / crisis"
+            "\n• risk_score: Continuous instability score (0=stable, 1=unstable)"
+            "\n• risk_level: LOW / MODERATE / ELEVATED / HIGH"
+            "\n• expected_run_length: Days since last detected changepoint (higher = more stable)"
+            "\n• trend_21d / trend_63d: Short and medium-term cumulative returns"
+            "\n• volatility_ann: 21-day annualised volatility"
+            "\n• interpretation: Actionable guidance for the current regime"
+            "\n• recent_regime_changes: Last 5 regime transitions with dates"
+            "\n\nUse this to understand WHAT KIND of market we are in, then adapt "
+            "strategy selection accordingly. Bull regimes favour trend-following; "
+            "bear regimes favour defensive positioning; crisis = capital preservation."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "Ignored — always runs on SPY for market regime."
+                }
+            },
+            "required": ["symbol"]
+        },
+        "fn": bocpd_regime_tool_fn,
+    })
+
+
 # =============================================================================
 # Volatility Prediction Tool (Early Warning System)
 # =============================================================================
@@ -1647,62 +1726,63 @@ def vix_roc_portfolio_risk_fn(state: dict, args: dict) -> dict:
 
 
 if _VIX_ROC_AVAILABLE:
+    # DEPRECATED: vix_roc_risk replaced by market_risk (ML-based drawdown + vol prediction)
+    # Functions still exist but are no longer registered as tools.
+    # register_tool({
+    #     "name": "vix_roc_risk",
+    #     "description": "DEPRECATED - Use market_risk instead.",
+    #     "parameters": {...},
+    #     "fn": vix_roc_risk_tool_fn,
+    # })
+    # register_tool({
+    #     "name": "vix_roc_portfolio_risk",
+    #     "description": "DEPRECATED - Use market_risk instead.",
+    #     "parameters": {...},
+    #     "fn": vix_roc_portfolio_risk_fn,
+    # })
+    pass
+
+
+# =============================================================================
+# MARKET RISK MODEL (ML-based drawdown probability + forward volatility)
+# Replaces vix_roc_risk binary signal with continuous risk probabilities.
+# =============================================================================
+
+try:
+    from market_risk_model import market_risk_tool_fn
+    _MARKET_RISK_AVAILABLE = True
+except ImportError:
+    _MARKET_RISK_AVAILABLE = False
+
+if _MARKET_RISK_AVAILABLE:
     register_tool({
-        "name": "vix_roc_risk",
+        "name": "market_risk",
         "description": (
-            "VIX Rate-of-Change based risk overlay - the PRIMARY market timing tool. "
-            "Walk-forward validated with 15/15 wins on tested assets (2020-2024). "
-            "\n\nAutomatically classifies assets into three tiers based on recovery characteristics:"
-            "\n• TIER 1 (Value/Cyclical): SPY, DIA, IWM, XLF, XLE - conservative, waits for VIX calm"
-            "\n• TIER 2 (Growth/Tech ETFs): QQQ, AAPL, AMZN, GOOGL - aggressive, quick re-entry"
-            "\n• TIER 3 (Mega-Cap Tech): NVDA, MSFT, META - ultra-conservative, only extreme events"
+            "ML-based market risk assessment — the PRIMARY market timing and position sizing tool. "
+            "Predicts DRAWDOWN PROBABILITY and FORWARD VOLATILITY using GradientBoosting "
+            "trained on VIX + SPY features with walk-forward validation."
             "\n\nReturns:"
-            "\n• tier: Asset classification and optimized parameters"
-            "\n• current_signal: 'exit' | 'reenter' | 'hold'"
-            "\n• position_status: Whether currently in or out of market"
-            "\n• strategy_params: Tier-specific thresholds"
-            "\n\nPerformance (2020-2024 out-of-sample):"
-            "\n• Tier 1: +39% avg excess return, 7/7 wins"
-            "\n• Tier 2: +20% avg excess return, 5/5 wins"
-            "\n• Tier 3: +140% avg excess return, 3/3 wins"
-            "\n\nUSE THIS before entering any position to check market risk."
+            "\n• drawdown_probability: P(SPY max DD > 3% in next 10 days) — continuous 0-1"
+            "\n• drawdown_risk_level: LOW / MODERATE / ELEVATED / HIGH / EXTREME"
+            "\n• predicted_fwd_vol_pct: Predicted annualised forward volatility"
+            "\n• current_realized_vol_pct: Current 20-day realised vol for comparison"
+            "\n• vol_trend: RISING / STABLE / FALLING"
+            "\n• suggested_position_pct: Recommended position size (1.0 = full, 0.2 = minimal)"
+            "\n• suggested_stop_multiplier: How much to widen stops (1.0x to 2.0x)"
+            "\n• variance_risk_premium: VIX / realised vol ratio"
+            "\n• top_risk_drivers: Top 5 features driving current risk"
+            "\n• validation: Walk-forward AUC, Brier score, vol R²"
+            "\n\nUSE THIS before entering any position to assess market-wide risk."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "symbol": {
                     "type": "string",
-                    "description": "Stock/ETF ticker symbol (e.g., SPY, NVDA, QQQ)"
+                    "description": "Ticker being evaluated (for context; risk is market-wide)."
                 }
             },
             "required": ["symbol"]
         },
-        "fn": vix_roc_risk_tool_fn
-    })
-    
-    register_tool({
-        "name": "vix_roc_portfolio_risk",
-        "description": (
-            "Get portfolio-wide VIX ROC risk assessment across multiple assets. "
-            "Provides overall market risk level and per-asset signals. "
-            "\n\nReturns:"
-            "\n• risk_level: 'LOW' | 'MODERATE' | 'ELEVATED' | 'HIGH'"
-            "\n• current_vix: Current VIX level"
-            "\n• exit_signals_active: Number of assets with active exit signals"
-            "\n• assets_out_of_market: Number of assets currently out"
-            "\n• individual_signals: Per-asset breakdown"
-            "\n\nUse for overall market risk assessment before making portfolio decisions."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "symbols": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of tickers to check. Default: SPY, QQQ, IWM"
-                }
-            },
-            "required": []
-        },
-        "fn": vix_roc_portfolio_risk_fn
+        "fn": market_risk_tool_fn,
     })
