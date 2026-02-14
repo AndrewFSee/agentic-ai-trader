@@ -91,68 +91,68 @@ python analyze_trade_agent_reflexion.py
 
 ```mermaid
 flowchart TD
-    START([👤 User Query\nTrading idea + Symbol]) --> RAG
+    START(["User Query: Trading idea + Symbol"]) --> RAG
 
-    subgraph RAG["1 · RAG Retrieval"]
-        RAG1[📚 Idea Search\nk=6 chunks matching\nsymbol + trading idea]
-        RAG2[📖 Risk Rules Search\nk=6 chunks on\nposition sizing & discipline]
+    subgraph RAG["1 - RAG Retrieval"]
+        RAG1["Idea Search k=6 chunks"]
+        RAG2["Risk Rules Search k=6 chunks"]
     end
 
     RAG --> PLANNER
 
-    subgraph PLANNER["2 · LLM Planner  ·  gpt-4.1"]
-        P1[Analyze query →\nJSON list of tool calls]
+    subgraph PLANNER["2 - LLM Planner gpt-4.1"]
+        P1["Analyze query - JSON list of tool calls"]
     end
 
     PLANNER --> TOOLS
 
-    subgraph TOOLS["3 · Tool Execution  ·  5-6 tools"]
+    subgraph TOOLS["3 - Tool Execution 5-8 tools"]
         direction LR
-        T1[📈 Polygon\nPrice Data]
-        T2[📊 RSI / MACD\nBollinger / ATR]
-        T3[📰 FinBERT\nNews Sentiment]
-        T4[🔴 VIX ROC\nRisk Signal]
-        T5[🌊 Vol\nPrediction]
-        T6[🔬 Regime\nDetection]
+        T1["Polygon Price Data"]
+        T2["RSI MACD BB ATR"]
+        T3["FinBERT Sentiment"]
+        T4["Market Risk ML"]
+        T5["Vol Prediction"]
+        T6["Topic Sentiment"]
     end
 
     TOOLS --> MEMORY
 
-    subgraph MEMORY["4 · Trade Memory"]
-        M1[🧠 Past Trades\nSimilar symbol/conditions]
-        M2[📝 Lessons Learned\nFrom previous outcomes]
+    subgraph MEMORY["4 - Trade Memory"]
+        M1["Past Trades"]
+        M2["Lessons Learned"]
     end
 
     MEMORY --> REFLEXION
 
-    subgraph REFLEXION["5 · Reflexion Loop  ·  4 LLM calls"]
+    subgraph REFLEXION["5 - Reflexion Loop 4 LLM calls"]
         direction TB
-        S1["STEP 1 — GENERATE\nInitial Analysis\n─────────────────\nSynthesize: tool data + book excerpts\n+ trade lessons → preliminary verdict"]
-        S2["STEP 2 — EVALUATE\nSelf-Critique\n─────────────────\nAttack the analysis:\nblind spots, overconfidence,\nmissing risks, confirmation bias"]
-        S3["STEP 3 — REFLECT\nExtract Learnings\n─────────────────\nWhat was wrong? What to fix?\nConsolidate corrections"]
-        S4["STEP 4 — REFINE\nFinal Decision ★ Structured JSON\n─────────────────\nverdict · confidence · entry\nstop_loss · target · R:R ratio\nposition_size · risks · checklist"]
+        S1["STEP 1 GENERATE Initial Analysis"]
+        S2["STEP 2 EVALUATE Self-Critique"]
+        S3["STEP 3 REFLECT Extract Learnings"]
+        S4["STEP 4 REFINE Final Structured JSON"]
         S1 --> S2 --> S3 --> S4
     end
 
     S4 --> OUTPUT
 
-    subgraph OUTPUT["6 · Structured Output"]
+    subgraph OUTPUT["6 - Structured Output"]
         direction LR
-        O1["🟢 ATTRACTIVE\n+ strict rules"]
-        O2["🔴 NOT ATTRACTIVE"]
-        O3["🟡 UNCLEAR"]
+        O1["ATTRACTIVE"]
+        O2["NOT ATTRACTIVE"]
+        O3["UNCLEAR"]
     end
 
     OUTPUT --> EXECUTION
 
-    subgraph EXECUTION["7 · Paper Trader Execution"]
+    subgraph EXECUTION["7 - Paper Trader Execution"]
         direction TB
-        E0{"Daily:\nPrice ≤ Stop Loss?"}
-        E0 -- Yes --> E1[🛑 Force Close\nStop-Loss Triggered]
-        E0 -- No --> E2{Strategy Signal?}
-        E2 -- BUY & conf > 3 --> E3["✅ Open Position\nwith stop / target / confidence"]
-        E2 -- SELL --> E4[📤 Close Position]
-        E2 -- HOLD / conf ≤ 3 --> E5[⏸️ No Action]
+        E0{"Daily: Price at Stop Loss?"}
+        E0 -- Yes --> E1["Force Close"]
+        E0 -- No --> E2{"Strategy Signal?"}
+        E2 -- BUY --> E3["Open Position"]
+        E2 -- SELL --> E4["Close Position"]
+        E2 -- HOLD --> E5["No Action"]
     end
 
     style RAG fill:#1a365d,stroke:#63b3ed,color:#fff

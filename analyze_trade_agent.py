@@ -743,6 +743,99 @@ def _format_ml_predictions(ml_result: Dict[str, Any] | None) -> str:
     return "\n".join(lines)
 
 
+def _format_market_risk(risk_result: Dict[str, Any] | None) -> str:
+    """Format ML-based market risk assessment for the decision LLM."""
+    if not risk_result:
+        return "Market risk assessment not available."
+
+    if risk_result.get("error"):
+        return f"Market risk: {risk_result['error']}"
+
+    dd_prob = risk_result.get("drawdown_probability", 0)
+    dd_level = risk_result.get("drawdown_risk_level", "N/A")
+    dd_thresh = risk_result.get("drawdown_threshold_pct", 3)
+    dd_window = risk_result.get("drawdown_window_days", 10)
+
+    fwd_vol = risk_result.get("predicted_fwd_vol_pct", 0)
+    cur_vol = risk_result.get("current_realized_vol_pct", 0)
+    vol_trend = risk_result.get("vol_trend", "N/A")
+
+    pos_pct = risk_result.get("suggested_position_pct", 1.0)
+    stop_mult = risk_result.get("suggested_stop_multiplier", 1.0)
+
+    vix = risk_result.get("current_vix", 0)
+    vix_z = risk_result.get("vix_zscore_60d", 0)
+    vix_roc = risk_result.get("vix_roc_5d_pct", 0)
+    vrp = risk_result.get("variance_risk_premium", 0)
+
+    validation = risk_result.get("validation", {})
+    top_drivers = risk_result.get("top_risk_drivers", [])
+    message = risk_result.get("message", "")
+
+    lines = []
+    lines.append("\n" + "=" * 80)
+    lines.append("⚠️  ML MARKET RISK ASSESSMENT (Isotonic Calibration + Vol Regression)")
+    lines.append("=" * 80)
+
+    # Risk level banner
+    level_emoji = {
+        "LOW": "🟢", "MODERATE": "🟡", "ELEVATED": "🟠",
+        "HIGH": "🔴", "EXTREME": "🔴🔴",
+    }.get(dd_level, "⚪")
+    lines.append(f"\n{level_emoji} Overall Risk Level: {dd_level}")
+    lines.append(f"   {message}")
+
+    # Drawdown probability
+    pred_dd_mag = risk_result.get("predicted_max_dd_pct", 0)
+    lines.append(f"\n📉 DRAWDOWN RISK:")
+    lines.append(f"   P(SPY max drawdown > {dd_thresh:.0f}% in next {dd_window} days): {dd_prob:.1%}")
+    lines.append(f"   Predicted Max DD Magnitude: {pred_dd_mag:.2f}%")
+    lines.append(f"   Risk Classification: {dd_level}")
+    lines.append(f"   Scale: LOW (<15%) | MODERATE (15-30%) | ELEVATED (30-50%) | HIGH (50-70%) | EXTREME (>70%)")
+
+    # Forward volatility
+    lines.append(f"\n📊 FORWARD VOLATILITY PREDICTION:")
+    lines.append(f"   Predicted Forward Vol (10d, annualized): {fwd_vol:.1f}%")
+    lines.append(f"   Current Realized Vol (20d, annualized):  {cur_vol:.1f}%")
+    lines.append(f"   Vol Trend: {vol_trend}")
+    if fwd_vol > cur_vol * 1.1:
+        lines.append(f"   ⚠️  Forward vol ABOVE current — expect wider swings")
+    elif fwd_vol < cur_vol * 0.9:
+        lines.append(f"   ✅ Forward vol BELOW current — calming conditions")
+
+    # Position guidance
+    lines.append(f"\n💰 POSITION SIZING GUIDANCE:")
+    lines.append(f"   Suggested Position: {pos_pct:.0%} of normal size")
+    lines.append(f"   Stop Multiplier:    {stop_mult:.1f}x (widen ATR-based stops by this factor)")
+
+    # VIX context
+    lines.append(f"\n🌡️  VIX CONTEXT:")
+    lines.append(f"   Current VIX:        {vix:.1f}")
+    lines.append(f"   VIX Z-Score (60d):  {vix_z:+.2f}")
+    lines.append(f"   VIX 5d Change:      {vix_roc:+.1f}%")
+    lines.append(f"   Variance Risk Prem: {vrp:.2f} (VIX/RealizedVol, >1.3 = elevated fear)")
+
+    # Top risk drivers
+    if top_drivers:
+        lines.append(f"\n🔍 TOP RISK DRIVERS (feature importance):")
+        for feat_name, importance in top_drivers[:5]:
+            bar = "█" * int(importance * 100)
+            lines.append(f"   {feat_name:<25s} {importance:.3f} {bar}")
+
+    # Validation metrics
+    if validation and not validation.get("note"):
+        auc = validation.get("overall_auc_roc", "N/A")
+        brier = validation.get("overall_brier", "N/A")
+        vol_r2 = validation.get("overall_vol_r2", "N/A")
+        lines.append(f"\n📐 MODEL VALIDATION (Walk-Forward, Last 4 Years OOS):")
+        lines.append(f"   Calibrated DD AUC:       {auc}")
+        lines.append(f"   Brier Score:             {brier}")
+        lines.append(f"   Vol Prediction R-squared:{vol_r2}")
+
+    lines.append("\n" + "=" * 80 + "\n")
+    return "\n".join(lines)
+
+
 def _format_regime_wasserstein(wass_result: Dict[str, Any] | None) -> str:
     """Format Wasserstein regime detection results for the decision LLM."""
     if not wass_result:
@@ -926,6 +1019,11 @@ def analyze_trade_agent(
     regime_hmm_result = tool_results.get("regime_hmm")
     regime_consensus_result = tool_results.get("regime_consensus")
     
+    # Format market risk assessment if available
+    market_risk_result = tool_results.get("market_risk")
+    has_market_risk = market_risk_result and not market_risk_result.get("error")
+    market_risk_text = _format_market_risk(market_risk_result) if has_market_risk else ""
+    
     has_wasserstein = regime_wasserstein_result and not regime_wasserstein_result.get("error")
     has_hmm = regime_hmm_result and not regime_hmm_result.get("error")
     has_consensus = regime_consensus_result and not regime_consensus_result.get("error")
@@ -955,6 +1053,7 @@ You MUST base all conclusions on:
 - the provided TOPIC-CLASSIFIED SENTIMENT from the news database (if available),
 - the provided EARNINGS TOPIC SIGNAL (if available — this is the highest-alpha sentiment feature),
 - the provided REGIME DETECTION results (Wasserstein volatility-based and/or HMM trend-based),
+- the provided MARKET RISK ASSESSMENT (ML-based drawdown probability + forward volatility, if available),
 - and the provided ML MODEL PREDICTIONS (if available).
 
 Use the books to justify how you interpret:
@@ -962,9 +1061,26 @@ Use the books to justify how you interpret:
 - technical indicators,
 - company context,
 - sentiment and narrative,
+- MARKET RISK ASSESSMENT (drawdown probability and forward volatility),
 - REGIME CLASSIFICATION (volatility regimes and trend regimes),
 - ML MODEL PREDICTIONS (consensus and confidence levels),
 - and how you construct risk management and sizing.
+
+MARKET RISK ASSESSMENT GUIDANCE:
+- Market risk model predicts P(SPY max drawdown > 3% in 10 days) as a CONTINUOUS probability.
+- Also predicts forward realized volatility for position sizing and stop placement.
+- Drawdown probability directly maps to position sizing:
+  * < 15%: LOW risk — full position, normal stops
+  * 15-30%: MODERATE — reduce to 85%, widen stops 1.2x
+  * 30-50%: ELEVATED — reduce to 65%, widen stops 1.4x
+  * 50-70%: HIGH — reduce to 40%, widen stops 1.7x
+  * > 70%: EXTREME — reduce to 20% or skip the trade entirely
+- Forward vol vs current vol indicates direction of volatility:
+  * Forward > Current: expect wider swings, widen stops preemptively
+  * Forward < Current: calming, can tighten stops or increase size
+- Variance Risk Premium > 1.3 indicates elevated fear (implied vol > realized vol).
+- ALWAYS use market_risk suggested_position_pct and suggested_stop_multiplier as baseline.
+- For HIGH-BETA stocks, scale the risk assessment UP proportionally.
 
 REGIME DETECTION GUIDANCE:
 - Wasserstein detects VOLATILITY regimes (Low/Med/High Vol). Use for position sizing and stop placement.
@@ -1045,6 +1161,14 @@ MACRO & LIQUIDITY INDICATORS
 ----------------------------
 {macro_summary_text}
 """]
+
+    # Add market risk section if available
+    if has_market_risk:
+        user_prompt_parts.append(f"""
+MARKET RISK ASSESSMENT (ML-Based)
+----------------------------------
+{market_risk_text}
+""")
     
     # Only add regime sections if data is available
     if has_wasserstein or has_hmm or has_consensus:
@@ -1103,8 +1227,23 @@ Using ONLY the information above:
      on valuation and quality where relevant.
 """
     
-    # Add regime analysis section only if regime data is available
+    # Add market risk section if available
     next_section = 4
+    if has_market_risk:
+        user_prompt += f"""
+{next_section}. MARKET RISK ASSESSMENT:
+   - Analyze the ML-based market risk assessment:
+     * What is the drawdown probability and risk level?
+     * What does forward vol vs current vol indicate about near-term conditions?
+     * Is the variance risk premium elevated (fear pricing)?
+   - Use the suggested position size and stop multiplier as BASELINE for risk management.
+   - If drawdown risk is ELEVATED or higher, explicitly recommend reduced sizing.
+   - For HIGH-BETA stocks (NVDA, TSLA, etc.), note that market-wide risk is amplified.
+   - Check what the top risk drivers are — what features are contributing most to current risk.
+"""
+        next_section += 1
+    
+    # Add regime analysis section only if regime data is available
     if has_wasserstein or has_hmm or has_consensus:
         user_prompt += f"""
 {next_section}. REGIME ANALYSIS:
@@ -1178,8 +1317,10 @@ Using ONLY the information above:
         next_section += 1
     
     ml_guidance = ", ML predictions," if has_ml else ""
+    market_risk_guidance = ", market risk assessment," if has_market_risk else ""
     regime_guidance = " and REGIME CLASSIFICATION" if (has_wasserstein or has_hmm) else ""
     regime_risk_guidance = " ADJUSTED FOR REGIME" if (has_wasserstein or has_hmm) else ""
+    market_risk_adjustment = " AND MARKET RISK" if has_market_risk else ""
     regime_risk_details = "\n   - If regime models disagree, recommend reducing position size or waiting for consensus." if has_consensus else ""
     regime_verdict_note = " (especially if regime models disagree)" if (has_wasserstein or has_hmm) else ""
     
@@ -1188,7 +1329,7 @@ Using ONLY the information above:
    - Evaluate whether the proposed trade has a reasonable edge according to the books, given:
      - price/technicals,
      - fundamentals,
-     - sentiment{ml_guidance}{regime_guidance}.
+     - sentiment{ml_guidance}{market_risk_guidance}{regime_guidance}.
    - If data is missing (e.g., no fundamentals or no news), explicitly factor that into your conclusion.
    - Synthesize ALL inputs: Do price, technicals, ML, regime, and sentiment ALIGN or CONFLICT?
    - Strongest edge when multiple signals confirm each other.
@@ -1197,11 +1338,13 @@ Using ONLY the information above:
     
     ml_risk_guidance = " + ML CONSENSUS" if has_ml else ""
     user_prompt += f"""
-{next_section}. RISK MANAGEMENT{regime_risk_guidance}{ml_risk_guidance}:
+{next_section}. RISK MANAGEMENT{regime_risk_guidance}{market_risk_adjustment}{ml_risk_guidance}:
    - Provide detailed risk management guidance:
-     - reasonable position size as a % of account (a range){'adjusted for regime volatility/uncertainty' if (has_wasserstein or has_hmm) else ''}{'and ML consensus strength' if has_ml else ''}
-     - stop loss ideas using price + ATR{'adjusted for regime (wider in high-vol regimes)' if (has_wasserstein or has_hmm) else ''}
+     - reasonable position size as a % of account (a range){'adjusted for regime volatility/uncertainty' if (has_wasserstein or has_hmm) else ''}{' and market risk drawdown probability' if has_market_risk else ''}{'and ML consensus strength' if has_ml else ''}
+     - stop loss ideas using price + ATR{'adjusted for regime (wider in high-vol regimes)' if (has_wasserstein or has_hmm) else ''}{' scaled by market_risk stop_multiplier' if has_market_risk else ''}
      - risk/reward considerations (aimed R:R ratio, e.g., 2:1).{regime_risk_details}
+     {'- Use market_risk suggested_position_pct as BASELINE size, then adjust for other factors.' if has_market_risk else ''}
+     {'- If drawdown probability > 50%, strongly consider skipping the trade or using minimal size.' if has_market_risk else ''}
      {'- Adjust size based on ML consensus: STRONG = normal, WEAK = reduce 30-50%, UNCLEAR = skip or minimal' if has_ml else ''}
 """
     next_section += 1
